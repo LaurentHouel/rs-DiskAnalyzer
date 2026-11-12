@@ -2,7 +2,7 @@
 
 Cross-platform (macOS, Windows, Linux) disk usage analyzer written in Rust with [egui](https://github.com/emilk/egui).
 
-- Fast parallel scan of any folder (home folder by default)
+- Fast parallel scan of any folder, started only when you choose one (home folder, folder picker or recent folders)
 - Folder tree with size, item count and modification date; click a column header to sort
 - Treemap and rings charts, synchronized with the tree
 - Move files and folders to the trash (context menu, toolbar button, `Delete` key)
@@ -24,11 +24,11 @@ On Linux, the build needs `libxkbcommon-dev libwayland-dev libxcb1-dev libgl1-me
 
 Install the recommended extensions (`rust-analyzer`, `CodeLLDB`), set a breakpoint, then press `F5` and pick a configuration from [.vscode/launch.json](.vscode/launch.json):
 
-- *scan home folder*, *scan ./src (small, fast)* or *scan a folder (prompt)*
+- *start screen (no scan)*, *scan home folder*, *scan ./src (small, fast)* or *scan a folder (prompt)*
 - *unit tests*
 - *Windows, MSVC debugger* (uses the C/C++ extension)
 
-The app accepts an optional folder as first argument (`cargo run -- /some/folder`). Dependencies are compiled with optimizations in dev builds so the UI stays responsive, while this crate stays fully debuggable.
+The app does not scan anything at startup; it accepts an optional folder as first argument to scan it right away (`cargo run -- /some/folder`). Dependencies are compiled with optimizations in dev builds so the UI stays responsive, while this crate stays fully debuggable.
 
 ## Shortcuts
 

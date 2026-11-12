@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
+const MAX_RECENT: usize = 5;
 const ROW_H: f32 = 24.0;
 const INDENT: f32 = 16.0;
 const BAR_W: f32 = 56.0;
@@ -64,18 +65,24 @@ pub struct App {
     pending_trash: Option<Vec<usize>>,
     /// Last status message; the flag is true for errors.
     message: Option<(bool, String)>,
+    recent: Vec<PathBuf>,
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, start: PathBuf) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, start: Option<PathBuf>) -> Self {
         let lang = cc
             .storage
             .and_then(|s| s.get_string("lang"))
             .and_then(|code| Lang::from_code(&code))
             .unwrap_or_else(Lang::detect);
+        let recent = cc
+            .storage
+            .and_then(|s| s.get_string("recent"))
+            .map(|r| r.lines().map(PathBuf::from).collect())
+            .unwrap_or_default();
         let mut app = Self {
             root: None,
-            root_path: start.clone(),
+            root_path: PathBuf::new(),
             view: Vec::new(),
             selected: None,
             expanded: HashSet::new(),
@@ -87,8 +94,11 @@ impl App {
             sort_desc: true,
             pending_trash: None,
             message: None,
+            recent,
         };
-        app.start_scan(&cc.egui_ctx, start);
+        if let Some(start) = start {
+            app.start_scan(&cc.egui_ctx, start);
+        }
         app
     }
 
@@ -97,6 +107,9 @@ impl App {
             old.cancel.store(true, Ordering::Relaxed);
         }
         self.message = None;
+        self.recent.retain(|p| p != &path);
+        self.recent.insert(0, path.clone());
+        self.recent.truncate(MAX_RECENT);
         self.scan = Some(scan::start(path, ctx.clone()));
     }
 
@@ -202,13 +215,65 @@ impl App {
         self.message = Some((false, trf(self.lang, Key::Trashed, &[&name])));
     }
 
+    fn scanning_screen(&self, ui: &mut Ui) {
+        let Some(scan) = &self.scan else { return };
+        ui.vertical_centered(|ui| {
+            ui.add_space(ui.available_height() / 3.0);
+            ui.spinner();
+            ui.label(trf(self.lang, Key::ScanningPath, &[&scan.path.display().to_string()]));
+            let p = &scan.progress;
+            ui.label(trf(
+                self.lang,
+                Key::ScanDetails,
+                &[
+                    &p.dirs.load(Ordering::Relaxed).to_string(),
+                    &p.files.load(Ordering::Relaxed).to_string(),
+                    &format_size(self.lang, p.bytes.load(Ordering::Relaxed)),
+                    &format!("{:.0}", scan.started.elapsed().as_secs_f32()),
+                ],
+            ));
+        });
+    }
+
+    /// Start page: nothing is scanned until the user picks a folder.
+    fn welcome_screen(&mut self, ui: &mut Ui) {
+        let lang = self.lang;
+        let mut chosen = None;
+        ui.vertical_centered(|ui| {
+            ui.add_space(ui.available_height() / 4.0);
+            ui.heading(tr(lang, Key::WelcomeTitle));
+            ui.add_space(6.0);
+            ui.label(tr(lang, Key::WelcomeHint));
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                ui.add_space((ui.available_width() - 300.0).max(0.0) / 2.0);
+                if ui.button(format!("🏠 {}", tr(lang, Key::HomeTip))).clicked() {
+                    chosen = dirs::home_dir();
+                }
+                if ui.button(format!("📂 {}", tr(lang, Key::Open))).clicked() {
+                    chosen = rfd::FileDialog::new().pick_folder();
+                }
+            });
+            if !self.recent.is_empty() {
+                ui.add_space(20.0);
+                ui.label(egui::RichText::new(tr(lang, Key::Recent)).weak());
+                for path in &self.recent {
+                    if ui.link(path.display().to_string()).clicked() {
+                        chosen = Some(path.clone());
+                    }
+                }
+            }
+        });
+        if let Some(path) = chosen {
+            self.start_scan(ui.ctx(), path);
+        }
+    }
+
     fn display_path(&self) -> String {
         self.root
             .as_ref()
-            .map(|r| r.path_of(&self.root_path, &self.view))
-            .unwrap_or_else(|| self.root_path.clone())
-            .display()
-            .to_string()
+            .map(|r| r.path_of(&self.root_path, &self.view).display().to_string())
+            .unwrap_or_default()
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
@@ -236,9 +301,13 @@ impl App {
             {
                 self.start_scan(&ctx, dir);
             }
-            if ui.button("⟳").on_hover_text(tr(lang, Key::RescanTip)).clicked() {
-                let path = self.scan.as_ref().map_or(self.root_path.clone(), |s| s.path.clone());
-                self.start_scan(&ctx, path);
+            let rescan_path = self.scan.as_ref().map_or(self.root_path.clone(), |s| s.path.clone());
+            if ui
+                .add_enabled(!rescan_path.as_os_str().is_empty(), egui::Button::new("⟳"))
+                .on_hover_text(tr(lang, Key::RescanTip))
+                .clicked()
+            {
+                self.start_scan(&ctx, rescan_path);
             }
             let can_trash = self.root.is_some() && self.selected.is_some();
             if ui
@@ -474,28 +543,11 @@ impl eframe::App for App {
 
         if self.root.is_none() {
             CentralPanel::default().show(ui, |ui| {
-                ui.centered_and_justified(|ui| {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(ui.available_height() / 3.0);
-                        ui.spinner();
-                        if let Some(scan) = &self.scan {
-                            ui.label(trf(self.lang, Key::ScanningPath, &[&scan.path.display().to_string()]));
-                            let p = &scan.progress;
-                            ui.label(trf(
-                                self.lang,
-                                Key::ScanDetails,
-                                &[
-                                    &p.dirs.load(Ordering::Relaxed).to_string(),
-                                    &p.files.load(Ordering::Relaxed).to_string(),
-                                    &format_size(self.lang, p.bytes.load(Ordering::Relaxed)),
-                                    &format!("{:.0}", scan.started.elapsed().as_secs_f32()),
-                                ],
-                            ));
-                        } else {
-                            ui.label(tr(self.lang, Key::ScanCancelled));
-                        }
-                    });
-                });
+                if self.scan.is_some() {
+                    self.scanning_screen(ui);
+                } else {
+                    self.welcome_screen(ui);
+                }
             });
             return;
         }
@@ -531,6 +583,8 @@ impl eframe::App for App {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string("lang", self.lang.code().to_owned());
+        let recent: Vec<String> = self.recent.iter().map(|p| p.display().to_string()).collect();
+        storage.set_string("recent", recent.join("\n"));
     }
 }
 

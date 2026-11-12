@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug: scan home folder",
+      "name": "Debug: start screen (no scan)",
       "type": "lldb",
       "request": "launch",
       "cargo": {
@@ -10,6 +10,18 @@
         "filter": { "name": "rs-disk-analyzer", "kind": "bin" }
       },
       "args": [],
+      "cwd": "${workspaceFolder}",
+      "env": { "RUST_BACKTRACE": "1" }
+    },
+    {
+      "name": "Debug: scan home folder",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--bin=rs-disk-analyzer"],
+        "filter": { "name": "rs-disk-analyzer", "kind": "bin" }
+      },
+      "args": ["${userHome}"],
       "cwd": "${workspaceFolder}",
       "env": { "RUST_BACKTRACE": "1" }
     },
