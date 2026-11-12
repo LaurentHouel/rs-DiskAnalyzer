@@ -2,6 +2,7 @@
 
 mod app;
 mod chart;
+mod drives;
 mod i18n;
 mod rings;
 mod scan;

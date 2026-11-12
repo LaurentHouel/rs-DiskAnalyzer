@@ -1,4 +1,5 @@
 use crate::chart::{ChartAction, ChartCtx};
+use crate::drives::{self, Drive};
 use crate::scan::{self, Node, ScanHandle};
 use crate::i18n::{Key, Lang, format_age, format_items, format_size, tr, trf};
 use crate::util::reveal_in_file_manager;
@@ -12,6 +13,9 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 const MAX_RECENT: usize = 5;
+const CARD_W: f32 = 250.0;
+const CARD_H: f32 = 84.0;
+const CARD_GAP: f32 = 10.0;
 const ROW_H: f32 = 24.0;
 const INDENT: f32 = 16.0;
 const BAR_W: f32 = 56.0;
@@ -66,6 +70,7 @@ pub struct App {
     /// Last status message; the flag is true for errors.
     message: Option<(bool, String)>,
     recent: Vec<PathBuf>,
+    drives: Vec<Drive>,
 }
 
 impl App {
@@ -95,6 +100,7 @@ impl App {
             pending_trash: None,
             message: None,
             recent,
+            drives: drives::list(),
         };
         if let Some(start) = start {
             app.start_scan(&cc.egui_ctx, start);
@@ -240,13 +246,14 @@ impl App {
         let lang = self.lang;
         let mut chosen = None;
         ui.vertical_centered(|ui| {
-            ui.add_space(ui.available_height() / 4.0);
+            ui.add_space((ui.available_height() / 8.0).min(60.0));
             ui.heading(tr(lang, Key::WelcomeTitle));
             ui.add_space(6.0);
             ui.label(tr(lang, Key::WelcomeHint));
-            ui.add_space(16.0);
+            ui.add_space(18.0);
+
             ui.horizontal(|ui| {
-                ui.add_space((ui.available_width() - 300.0).max(0.0) / 2.0);
+                ui.add_space((ui.available_width() - 360.0).max(0.0) / 2.0);
                 if ui.button(format!("🏠 {}", tr(lang, Key::HomeTip))).clicked() {
                     chosen = dirs::home_dir();
                 }
@@ -254,9 +261,35 @@ impl App {
                     chosen = rfd::FileDialog::new().pick_folder();
                 }
             });
+
+            if !self.drives.is_empty() {
+                ui.add_space(20.0);
+                ui.horizontal(|ui| {
+                    ui.add_space((ui.available_width() - 120.0).max(0.0) / 2.0);
+                    ui.label(egui::RichText::new(tr(lang, Key::Drives)).strong());
+                    if ui.small_button("⟳").on_hover_text(tr(lang, Key::RescanTip)).clicked() {
+                        self.drives = drives::list();
+                    }
+                });
+                ui.add_space(6.0);
+                let per_row = (((ui.available_width() + CARD_GAP) / (CARD_W + CARD_GAP)) as usize).clamp(1, 4);
+                for row in self.drives.chunks(per_row) {
+                    let used = row.len() as f32 * (CARD_W + CARD_GAP) - CARD_GAP;
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = CARD_GAP;
+                        ui.add_space(((ui.available_width() - used) / 2.0).max(0.0));
+                        for drive in row {
+                            if drive_card(ui, lang, drive) {
+                                chosen = Some(drive.mount.clone());
+                            }
+                        }
+                    });
+                }
+            }
+
             if !self.recent.is_empty() {
                 ui.add_space(20.0);
-                ui.label(egui::RichText::new(tr(lang, Key::Recent)).weak());
+                ui.label(egui::RichText::new(tr(lang, Key::Recent)).strong());
                 for path in &self.recent {
                     if ui.link(path.display().to_string()).clicked() {
                         chosen = Some(path.clone());
@@ -747,4 +780,70 @@ fn draw_row(
         }
     });
     action
+}
+
+fn drive_card(ui: &mut Ui, lang: Lang, drive: &Drive) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(vec2(CARD_W, CARD_H), Sense::click());
+    let visuals = ui.visuals();
+    let fill = if resp.hovered() {
+        visuals.widgets.hovered.weak_bg_fill
+    } else {
+        visuals.widgets.inactive.weak_bg_fill
+    };
+    let border = if resp.hovered() {
+        visuals.selection.stroke.color
+    } else {
+        visuals.widgets.noninteractive.bg_stroke.color
+    };
+    let (strong, weak) = (visuals.strong_text_color(), visuals.weak_text_color());
+
+    let ratio = if drive.total > 0 {
+        (drive.used() as f64 / drive.total as f64) as f32
+    } else {
+        0.0
+    };
+    let usage_color = match ratio {
+        r if r >= 0.9 => Color32::from_rgb(214, 60, 50),
+        r if r >= 0.75 => Color32::from_rgb(230, 150, 40),
+        _ => Color32::from_rgb(52, 120, 220),
+    };
+
+    let p = ui.painter();
+    p.rect(rect, 8.0, fill, Stroke::new(1.0, border), StrokeKind::Inside);
+    drives::paint_icon(
+        p,
+        Rect::from_min_size(rect.min + vec2(12.0, 16.0), vec2(56.0, 52.0)),
+        drive.kind,
+        Color32::from_rgb(90, 220, 120),
+    );
+
+    let x = rect.left() + 82.0;
+    let text_w = rect.right() - 12.0 - x;
+    p.with_clip_rect(Rect::from_min_size(pos2(x, rect.top()), vec2(text_w, CARD_H))).text(
+        pos2(x, rect.top() + 18.0),
+        Align2::LEFT_CENTER,
+        &drive.name,
+        FontId::proportional(14.0),
+        strong,
+    );
+    let bar = Rect::from_min_size(pos2(x, rect.top() + 34.0), vec2(text_w, 10.0));
+    p.rect_filled(bar, 5.0, Color32::from_black_alpha(70));
+    p.rect_filled(
+        Rect::from_min_size(bar.min, vec2((bar.width() * ratio).max(if ratio > 0.0 { 5.0 } else { 0.0 }), bar.height())),
+        5.0,
+        usage_color,
+    );
+    p.with_clip_rect(Rect::from_min_size(pos2(x, rect.top()), vec2(text_w, CARD_H))).text(
+        pos2(x, rect.top() + 58.0),
+        Align2::LEFT_CENTER,
+        trf(
+            lang,
+            Key::DriveFree,
+            &[&format_size(lang, drive.available), &format_size(lang, drive.total)],
+        ),
+        FontId::proportional(11.5),
+        weak,
+    );
+
+    resp.on_hover_text(drive.mount.display().to_string()).clicked()
 }
