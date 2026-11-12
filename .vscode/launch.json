@@ -1,0 +1,70 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug: scan home folder",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--bin=rs-disk-analyzer"],
+        "filter": { "name": "rs-disk-analyzer", "kind": "bin" }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "env": { "RUST_BACKTRACE": "1" }
+    },
+    {
+      "name": "Debug: scan ./src (small, fast)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--bin=rs-disk-analyzer"],
+        "filter": { "name": "rs-disk-analyzer", "kind": "bin" }
+      },
+      "args": ["${workspaceFolder}/src"],
+      "cwd": "${workspaceFolder}",
+      "env": { "RUST_BACKTRACE": "1" }
+    },
+    {
+      "name": "Debug: scan a folder (prompt)",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["build", "--bin=rs-disk-analyzer"],
+        "filter": { "name": "rs-disk-analyzer", "kind": "bin" }
+      },
+      "args": ["${input:folderToScan}"],
+      "cwd": "${workspaceFolder}",
+      "env": { "RUST_BACKTRACE": "1" }
+    },
+    {
+      "name": "Debug: unit tests",
+      "type": "lldb",
+      "request": "launch",
+      "cargo": {
+        "args": ["test", "--no-run", "--bin=rs-disk-analyzer"],
+        "filter": { "name": "rs-disk-analyzer", "kind": "bin" }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Debug (Windows, MSVC debugger)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/target/debug/rs-disk-analyzer.exe",
+      "args": ["${workspaceFolder}/src"],
+      "cwd": "${workspaceFolder}",
+      "environment": [{ "name": "RUST_BACKTRACE", "value": "1" }],
+      "preLaunchTask": "cargo build"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "folderToScan",
+      "type": "promptString",
+      "description": "Folder to scan at startup",
+      "default": "${workspaceFolder}"
+    }
+  ]
+}

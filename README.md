@@ -20,6 +20,16 @@ cargo run --release
 
 On Linux, the build needs `libxkbcommon-dev libwayland-dev libxcb1-dev libgl1-mesa-dev`.
 
+## Debugging (VS Code)
+
+Install the recommended extensions (`rust-analyzer`, `CodeLLDB`), set a breakpoint, then press `F5` and pick a configuration from [.vscode/launch.json](.vscode/launch.json):
+
+- *scan home folder*, *scan ./src (small, fast)* or *scan a folder (prompt)*
+- *unit tests*
+- *Windows, MSVC debugger* (uses the C/C++ extension)
+
+The app accepts an optional folder as first argument (`cargo run -- /some/folder`). Dependencies are compiled with optimizations in dev builds so the UI stays responsive, while this crate stays fully debuggable.
+
 ## Shortcuts
 
 | Action | Shortcut |
