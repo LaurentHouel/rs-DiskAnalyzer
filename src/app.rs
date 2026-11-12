@@ -79,7 +79,7 @@ impl App {
             .storage
             .and_then(|s| s.get_string("lang"))
             .and_then(|code| Lang::from_code(&code))
-            .unwrap_or_else(Lang::detect);
+            .unwrap_or(Lang::En);
         let recent = cc
             .storage
             .and_then(|s| s.get_string("recent"))

@@ -2902,7 +2902,6 @@ dependencies = [
  "egui",
  "rayon",
  "rfd",
- "sys-locale",
  "sysinfo",
  "trash",
 ]

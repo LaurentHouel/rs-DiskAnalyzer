@@ -34,13 +34,6 @@ impl Lang {
         Lang::ALL.into_iter().find(|l| l.code() == primary)
     }
 
-    /// Language of the operating system, English when unsupported.
-    pub fn detect() -> Lang {
-        sys_locale::get_locale()
-            .and_then(|l| Lang::from_code(&l))
-            .unwrap_or(Lang::En)
-    }
-
     fn idx(self) -> usize {
         self as usize
     }

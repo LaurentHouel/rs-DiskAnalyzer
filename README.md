@@ -6,7 +6,7 @@ Cross-platform (macOS, Windows, Linux) disk usage analyzer written in Rust with 
 - Folder tree with size, item count and modification date; click a column header to sort
 - Treemap and rings charts, synchronized with the tree
 - Move files and folders to the trash (context menu, toolbar button, `Delete` key)
-- Languages: English, Français, Español, Deutsch (detected from the system, switchable in the toolbar)
+- Languages: English, Français, Español, Deutsch (English by default, switchable in the toolbar; your choice is remembered)
 
 ## Download
 
