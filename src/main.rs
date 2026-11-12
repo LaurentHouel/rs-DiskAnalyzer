@@ -1,5 +1,8 @@
+#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+
 mod app;
 mod chart;
+mod i18n;
 mod rings;
 mod scan;
 mod treemap;
@@ -17,6 +20,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Disk Analyzer",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(&cc.egui_ctx, start)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, start)))),
     )
 }

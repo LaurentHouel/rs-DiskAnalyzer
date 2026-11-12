@@ -1,6 +1,6 @@
 use crate::chart::{ChartAction, ChartCtx, text_color_on, tooltip};
 use crate::scan::Node;
-use crate::util::format_size;
+use crate::i18n::format_size;
 use egui::ecolor::Hsva;
 use egui::epaint::Vertex;
 use egui::{Align2, Color32, FontId, Mesh, Pos2, Sense, Shape, Stroke, Ui, vec2};
@@ -170,7 +170,7 @@ pub fn show(ui: &mut Ui, cx: &ChartCtx) -> Option<ChartAction> {
     painter.text(
         center + vec2(0.0, 8.0),
         Align2::CENTER_CENTER,
-        format_size(view.size),
+        format_size(cx.lang, view.size),
         FontId::proportional(11.0),
         ui.visuals().text_color(),
     );

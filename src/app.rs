@@ -1,6 +1,7 @@
 use crate::chart::{ChartAction, ChartCtx};
 use crate::scan::{self, Node, ScanHandle};
-use crate::util::{format_age, format_items, format_size, reveal_in_file_manager};
+use crate::i18n::{Key, Lang, format_age, format_items, format_size, tr, trf};
+use crate::util::reveal_in_file_manager;
 use crate::{rings, treemap};
 use egui::{
     Align2, CentralPanel, Color32, CornerRadius, FontId, Panel, Rect, ScrollArea, Sense, Shape,
@@ -23,8 +24,17 @@ enum ChartKind {
     Treemap,
 }
 
+#[derive(PartialEq, Clone, Copy)]
+enum SortKey {
+    Name,
+    Size,
+    Items,
+    Modified,
+}
+
 enum ListAction {
     Select(Vec<usize>),
+    Trash(Vec<usize>),
     Toggle(Vec<usize>),
     Open(Vec<usize>),
     Reveal(Vec<usize>),
@@ -48,10 +58,21 @@ pub struct App {
     scan: Option<ScanHandle>,
     chart: ChartKind,
     scroll_to_selected: bool,
+    lang: Lang,
+    sort_key: SortKey,
+    sort_desc: bool,
+    pending_trash: Option<Vec<usize>>,
+    /// Last status message; the flag is true for errors.
+    message: Option<(bool, String)>,
 }
 
 impl App {
-    pub fn new(ctx: &egui::Context, start: PathBuf) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, start: PathBuf) -> Self {
+        let lang = cc
+            .storage
+            .and_then(|s| s.get_string("lang"))
+            .and_then(|code| Lang::from_code(&code))
+            .unwrap_or_else(Lang::detect);
         let mut app = Self {
             root: None,
             root_path: start.clone(),
@@ -61,8 +82,13 @@ impl App {
             scan: None,
             chart: ChartKind::Treemap,
             scroll_to_selected: false,
+            lang,
+            sort_key: SortKey::Size,
+            sort_desc: true,
+            pending_trash: None,
+            message: None,
         };
-        app.start_scan(ctx, start);
+        app.start_scan(&cc.egui_ctx, start);
         app
     }
 
@@ -70,6 +96,7 @@ impl App {
         if let Some(old) = self.scan.take() {
             old.cancel.store(true, Ordering::Relaxed);
         }
+        self.message = None;
         self.scan = Some(scan::start(path, ctx.clone()));
     }
 
@@ -109,6 +136,72 @@ impl App {
         }
     }
 
+    fn trash_dialog(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.pending_trash.clone() else { return };
+        let Some(node) = self.root.as_ref().and_then(|r| r.get(&path)) else {
+            self.pending_trash = None;
+            return;
+        };
+        let lang = self.lang;
+        let text = trf(lang, Key::ConfirmTrash, &[&node.name, &format_size(lang, node.size)]);
+        let mut confirmed = false;
+        let modal = egui::Modal::new(egui::Id::unique("trash_modal")).show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.heading(tr(lang, Key::MoveToTrash));
+            ui.add_space(6.0);
+            ui.label(text);
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button(tr(lang, Key::MoveToTrash)).clicked() {
+                    confirmed = true;
+                }
+                if ui.button(tr(lang, Key::Cancel)).clicked() {
+                    ui.close();
+                }
+            });
+        });
+        if confirmed {
+            self.pending_trash = None;
+            self.trash(&path);
+        } else if modal.should_close() {
+            self.pending_trash = None;
+        }
+    }
+
+    fn trash(&mut self, path: &[usize]) {
+        let Some(root) = &mut self.root else { return };
+        let target = root.path_of(&self.root_path, path);
+        let name = root.get(path).map(|n| n.name.clone()).unwrap_or_default();
+        if let Err(e) = trash::delete(&target) {
+            self.message = Some((true, trf(self.lang, Key::TrashFailed, &[&e.to_string()])));
+            return;
+        }
+
+        // Removing a node re-sorts its ancestors, so index paths are rebuilt from filesystem paths.
+        let root_path = &self.root_path;
+        let view_path = root.path_of(root_path, &self.view);
+        let selected = self.selected.as_ref().map(|s| root.path_of(root_path, s));
+        let expanded: Vec<PathBuf> = self.expanded.iter().map(|e| root.path_of(root_path, e)).collect();
+
+        root.remove(path);
+
+        let mut view_path = view_path;
+        self.view = loop {
+            if let Some(v) = root.resolve(root_path, &view_path) {
+                break v;
+            }
+            if !view_path.pop() {
+                break Vec::new();
+            }
+        };
+        self.selected = selected.and_then(|s| root.resolve(root_path, &s));
+        self.expanded = expanded
+            .iter()
+            .filter_map(|e| root.resolve(root_path, e))
+            .collect();
+        self.message = Some((false, trf(self.lang, Key::Trashed, &[&name])));
+    }
+
     fn display_path(&self) -> String {
         self.root
             .as_ref()
@@ -120,66 +213,150 @@ impl App {
 
     fn toolbar(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        let lang = self.lang;
         ui.horizontal(|ui| {
             ui.add_space(4.0);
             if ui
                 .add_enabled(!self.view.is_empty(), egui::Button::new("⬅"))
-                .on_hover_text("Parent folder (Backspace)")
+                .on_hover_text(tr(lang, Key::ParentTip))
                 .clicked()
             {
                 self.go_up();
             }
-            if ui.button("🏠").on_hover_text("Scan home folder").clicked()
+            if ui.button("🏠").on_hover_text(tr(lang, Key::HomeTip)).clicked()
                 && let Some(home) = dirs::home_dir()
             {
                 self.start_scan(&ctx, home);
             }
-            if ui.button("📂 Open…").on_hover_text("Choose a folder to scan").clicked()
+            if ui
+                .button(format!("📂 {}", tr(lang, Key::Open)))
+                .on_hover_text(tr(lang, Key::OpenTip))
+                .clicked()
                 && let Some(dir) = rfd::FileDialog::new().pick_folder()
             {
                 self.start_scan(&ctx, dir);
             }
-            if ui.button("⟳").on_hover_text("Rescan").clicked() {
+            if ui.button("⟳").on_hover_text(tr(lang, Key::RescanTip)).clicked() {
                 let path = self.scan.as_ref().map_or(self.root_path.clone(), |s| s.path.clone());
                 self.start_scan(&ctx, path);
+            }
+            let can_trash = self.root.is_some() && self.selected.is_some();
+            if ui
+                .add_enabled(can_trash, egui::Button::new(format!("🗑 {}", tr(lang, Key::MoveToTrash))))
+                .on_hover_text(tr(lang, Key::TrashTip))
+                .clicked()
+            {
+                self.pending_trash = self.selected.clone();
             }
             ui.separator();
             ui.label(self.display_path());
 
-            if let Some(scan) = &self.scan {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Cancel").clicked() {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                egui::ComboBox::from_id_salt("lang")
+                    .selected_text(self.lang.native_name())
+                    .show_ui(ui, |ui| {
+                        for l in Lang::ALL {
+                            ui.selectable_value(&mut self.lang, l, l.native_name());
+                        }
+                    })
+                    .response
+                    .on_hover_text(tr(lang, Key::Language));
+                if let Some(scan) = &self.scan {
+                    if ui.button(tr(lang, Key::Cancel)).clicked() {
                         scan.cancel.store(true, Ordering::Relaxed);
                     }
                     ui.spinner();
                     let p = &scan.progress;
-                    ui.label(format!(
-                        "{} files · {}",
-                        p.files.load(Ordering::Relaxed),
-                        format_size(p.bytes.load(Ordering::Relaxed))
+                    ui.label(trf(
+                        lang,
+                        Key::ScanProgress,
+                        &[
+                            &p.files.load(Ordering::Relaxed).to_string(),
+                            &format_size(lang, p.bytes.load(Ordering::Relaxed)),
+                        ],
                     ));
-                });
-            }
+                }
+            });
         });
+        if let Some((is_error, text)) = &self.message {
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                let color = if *is_error {
+                    Color32::from_rgb(230, 80, 70)
+                } else {
+                    ui.visuals().weak_text_color()
+                };
+                ui.colored_label(color, text);
+            });
+        }
+    }
+
+    fn header(&mut self, ui: &mut Ui) {
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
+        let cols = Columns::new(rect);
+        let spans = [
+            (SortKey::Name, Key::Folder, rect.left(), cols.name_right, cols.name_right),
+            (SortKey::Size, Key::Size, cols.name_right, cols.size_right, cols.size_right),
+            (SortKey::Items, Key::Contents, cols.size_right, cols.items_right, cols.items_right),
+            (SortKey::Modified, Key::Modified, cols.items_right, rect.right(), cols.date_right),
+        ];
+        let font = FontId::proportional(12.0);
+        for (i, (key, label, x0, x1, anchor)) in spans.into_iter().enumerate() {
+            let hit = Rect::from_min_max(pos2(x0, rect.top()), pos2(x1, rect.bottom()));
+            let resp = ui.interact(hit, ui.scope_id().with(("sort_header", i)), Sense::click());
+            let active = self.sort_key == key;
+            let color = if active || resp.hovered() {
+                ui.visuals().strong_text_color()
+            } else {
+                ui.visuals().weak_text_color()
+            };
+            let y = rect.center().y;
+            let left_aligned = key == SortKey::Name;
+            let (pos, align) = if left_aligned {
+                (pos2(x0 + 6.0, y), Align2::LEFT_CENTER)
+            } else {
+                (pos2(anchor, y), Align2::RIGHT_CENTER)
+            };
+            let text_rect = ui.painter().text(pos, align, tr(self.lang, label), font.clone(), color);
+            if active {
+                let c = if left_aligned {
+                    pos2(text_rect.right() + 9.0, y)
+                } else {
+                    pos2(text_rect.left() - 9.0, y)
+                };
+                let pts = if self.sort_desc {
+                    vec![c + vec2(-3.5, -2.0), c + vec2(3.5, -2.0), c + vec2(0.0, 3.0)]
+                } else {
+                    vec![c + vec2(-3.5, 2.0), c + vec2(3.5, 2.0), c + vec2(0.0, -3.0)]
+                };
+                ui.painter().add(Shape::convex_polygon(pts, color, Stroke::NONE));
+            }
+            if resp.clicked() {
+                if active {
+                    self.sort_desc = !self.sort_desc;
+                } else {
+                    self.sort_key = key;
+                    self.sort_desc = key != SortKey::Name;
+                }
+            }
+        }
     }
 
     fn list(&mut self, ui: &mut Ui) {
+        self.header(ui);
         let Some(root) = &self.root else { return };
         let Some(view) = root.get(&self.view) else { return };
+        let lang = self.lang;
 
         let mut rows = Vec::new();
-        flatten(view, &mut self.view.clone(), 0, &self.expanded, &mut rows);
-
-        // Header: column titles, then the current folder.
-        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
-        let cols = Columns::new(rect);
-        let weak = ui.visuals().weak_text_color();
-        let font = FontId::proportional(12.0);
-        let p = ui.painter();
-        p.text(pos2(rect.left() + 6.0, rect.center().y), Align2::LEFT_CENTER, "Folder", font.clone(), weak);
-        p.text(pos2(cols.size_right, rect.center().y), Align2::RIGHT_CENTER, "Size ▼", font.clone(), weak);
-        p.text(pos2(cols.items_right, rect.center().y), Align2::RIGHT_CENTER, "Contents", font.clone(), weak);
-        p.text(pos2(cols.date_right, rect.center().y), Align2::RIGHT_CENTER, "Modified", font, weak);
+        flatten(
+            view,
+            &mut self.view.clone(),
+            0,
+            &self.expanded,
+            (self.sort_key, self.sort_desc),
+            &mut rows,
+        );
 
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
         let cols = Columns::new(rect);
@@ -195,9 +372,9 @@ impl App {
         );
         let normal = ui.visuals().text_color();
         let f = FontId::proportional(13.0);
-        p.text(pos2(cols.size_right, y), Align2::RIGHT_CENTER, format_size(view.size), f.clone(), strong);
-        p.text(pos2(cols.items_right, y), Align2::RIGHT_CENTER, format_items(view.items), f.clone(), normal);
-        p.text(pos2(cols.date_right, y), Align2::RIGHT_CENTER, format_age(view.modified), f, normal);
+        p.text(pos2(cols.size_right, y), Align2::RIGHT_CENTER, format_size(lang, view.size), f.clone(), strong);
+        p.text(pos2(cols.items_right, y), Align2::RIGHT_CENTER, format_items(lang, view.items), f.clone(), normal);
+        p.text(pos2(cols.date_right, y), Align2::RIGHT_CENTER, format_age(lang, view.modified), f, normal);
 
         let mut action = None;
         let mut area = ScrollArea::vertical().auto_shrink([false, false]);
@@ -216,7 +393,7 @@ impl App {
         area.show_rows(ui, ROW_H, rows.len(), |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for row in &rows[range] {
-                if let Some(a) = draw_row(ui, row, self.selected.as_ref(), &self.expanded) {
+                if let Some(a) = draw_row(ui, lang, row, self.selected.as_ref(), &self.expanded) {
                     action = Some(a);
                 }
             }
@@ -231,6 +408,7 @@ impl App {
                 }
             }
             Some(ListAction::Open(p)) => self.open(p),
+            Some(ListAction::Trash(p)) => self.pending_trash = Some(p),
             Some(ListAction::Reveal(p)) => {
                 if let Some(root) = &self.root {
                     reveal_in_file_manager(&root.path_of(&root_path, &p));
@@ -249,6 +427,7 @@ impl App {
     fn chart_panel(&mut self, ui: &mut Ui) {
         let Some(root) = &self.root else { return };
         let cx = ChartCtx {
+            lang: self.lang,
             root,
             root_path: &self.root_path,
             base: &self.view,
@@ -273,8 +452,18 @@ impl eframe::App for App {
         if self.scan.is_some() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
         }
-        if ui.input(|i| i.key_pressed(egui::Key::Backspace)) {
+        let (go_up, delete) = ui.input(|i| {
+            let cmd_backspace = i.modifiers.command && i.key_pressed(egui::Key::Backspace);
+            (
+                i.key_pressed(egui::Key::Backspace) && !i.modifiers.command,
+                i.key_pressed(egui::Key::Delete) || cmd_backspace,
+            )
+        });
+        if go_up && self.pending_trash.is_none() {
             self.go_up();
+        }
+        if delete && self.pending_trash.is_none() && self.root.is_some() {
+            self.pending_trash = self.selected.clone();
         }
 
         Panel::top("toolbar").show(ui, |ui| {
@@ -290,17 +479,20 @@ impl eframe::App for App {
                         ui.add_space(ui.available_height() / 3.0);
                         ui.spinner();
                         if let Some(scan) = &self.scan {
-                            ui.label(format!("Scanning {}…", scan.path.display()));
+                            ui.label(trf(self.lang, Key::ScanningPath, &[&scan.path.display().to_string()]));
                             let p = &scan.progress;
-                            ui.label(format!(
-                                "{} folders · {} files · {} · {:.0}s",
-                                p.dirs.load(Ordering::Relaxed),
-                                p.files.load(Ordering::Relaxed),
-                                format_size(p.bytes.load(Ordering::Relaxed)),
-                                scan.started.elapsed().as_secs_f32()
+                            ui.label(trf(
+                                self.lang,
+                                Key::ScanDetails,
+                                &[
+                                    &p.dirs.load(Ordering::Relaxed).to_string(),
+                                    &p.files.load(Ordering::Relaxed).to_string(),
+                                    &format_size(self.lang, p.bytes.load(Ordering::Relaxed)),
+                                    &format!("{:.0}", scan.started.elapsed().as_secs_f32()),
+                                ],
                             ));
                         } else {
-                            ui.label("Scan cancelled. Use “Open…” to choose a folder.");
+                            ui.label(tr(self.lang, Key::ScanCancelled));
                         }
                     });
                 });
@@ -320,9 +512,13 @@ impl eframe::App for App {
                 ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                     ui.horizontal(|ui| {
                         let w = ui.available_width();
-                        ui.add_space((w - 270.0).max(0.0) / 2.0);
-                        ui.selectable_value(&mut self.chart, ChartKind::Rings, "◎ Rings Chart");
-                        ui.selectable_value(&mut self.chart, ChartKind::Treemap, "▦ Treemap Chart");
+                        ui.add_space((w - 300.0).max(0.0) / 2.0);
+                        let (rings, treemap) = (
+                            format!("◎ {}", tr(self.lang, Key::Rings)),
+                            format!("▦ {}", tr(self.lang, Key::Treemap)),
+                        );
+                        ui.selectable_value(&mut self.chart, ChartKind::Rings, rings);
+                        ui.selectable_value(&mut self.chart, ChartKind::Treemap, treemap);
                     });
                 });
             });
@@ -330,6 +526,11 @@ impl eframe::App for App {
         });
 
         CentralPanel::default().show(ui, |ui| self.chart_panel(ui));
+        self.trash_dialog(ui.ctx());
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string("lang", self.lang.code().to_owned());
     }
 }
 
@@ -354,14 +555,30 @@ impl Columns {
     }
 }
 
+fn sorted_indices(children: &[Node], (key, desc): (SortKey, bool)) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..children.len()).collect();
+    match key {
+        SortKey::Name => idx.sort_by_cached_key(|&i| children[i].name.to_lowercase()),
+        SortKey::Size => idx.sort_by_key(|&i| children[i].size),
+        SortKey::Items => idx.sort_by_key(|&i| children[i].items),
+        SortKey::Modified => idx.sort_by_key(|&i| children[i].modified),
+    }
+    if desc {
+        idx.reverse();
+    }
+    idx
+}
+
 fn flatten<'a>(
     node: &'a Node,
     path: &mut Vec<usize>,
     depth: usize,
     expanded: &HashSet<Vec<usize>>,
+    sort: (SortKey, bool),
     rows: &mut Vec<Row<'a>>,
 ) {
-    for (i, child) in node.children.iter().enumerate() {
+    for i in sorted_indices(&node.children, sort) {
+        let child = &node.children[i];
         path.push(i);
         rows.push(Row {
             node: child,
@@ -370,7 +587,7 @@ fn flatten<'a>(
             parent_size: node.size,
         });
         if child.is_dir && expanded.contains(path.as_slice()) {
-            flatten(child, path, depth + 1, expanded, rows);
+            flatten(child, path, depth + 1, expanded, sort, rows);
         }
         path.pop();
     }
@@ -378,6 +595,7 @@ fn flatten<'a>(
 
 fn draw_row(
     ui: &mut Ui,
+    lang: Lang,
     row: &Row,
     selected: Option<&Vec<usize>>,
     expanded: &HashSet<Vec<usize>>,
@@ -438,9 +656,9 @@ fn draw_row(
     );
 
     let f = FontId::proportional(13.0);
-    p.text(pos2(cols.size_right, y), Align2::RIGHT_CENTER, format_size(node.size), f.clone(), visuals.text_color());
-    p.text(pos2(cols.items_right, y), Align2::RIGHT_CENTER, format_items(node.items), f.clone(), visuals.text_color());
-    p.text(pos2(cols.date_right, y), Align2::RIGHT_CENTER, format_age(node.modified), f, visuals.text_color());
+    p.text(pos2(cols.size_right, y), Align2::RIGHT_CENTER, format_size(lang, node.size), f.clone(), visuals.text_color());
+    p.text(pos2(cols.items_right, y), Align2::RIGHT_CENTER, format_items(lang, node.items), f.clone(), visuals.text_color());
+    p.text(pos2(cols.date_right, y), Align2::RIGHT_CENTER, format_age(lang, node.modified), f, visuals.text_color());
 
     let mut action = None;
     if resp.double_clicked() && node.is_dir {
@@ -456,16 +674,21 @@ fn draw_row(
         });
     }
     resp.context_menu(|ui| {
-        if ui.button("Show in file manager").clicked() {
+        if ui.button(tr(lang, Key::ShowInFileManager)).clicked() {
             action = Some(ListAction::Reveal(row.path.clone()));
             ui.close();
         }
-        if ui.button("Copy path").clicked() {
+        if ui.button(tr(lang, Key::CopyPath)).clicked() {
             action = Some(ListAction::CopyPath(row.path.clone()));
             ui.close();
         }
-        if node.is_dir && ui.button("Open in chart").clicked() {
+        if node.is_dir && ui.button(tr(lang, Key::OpenInChart)).clicked() {
             action = Some(ListAction::Open(row.path.clone()));
+            ui.close();
+        }
+        ui.separator();
+        if ui.button(tr(lang, Key::MoveToTrash)).clicked() {
+            action = Some(ListAction::Trash(row.path.clone()));
             ui.close();
         }
     });

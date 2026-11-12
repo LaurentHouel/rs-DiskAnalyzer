@@ -1,5 +1,5 @@
 use crate::scan::Node;
-use crate::util::{format_age, format_items, format_size};
+use crate::i18n::{Key, Lang, format_age, format_items, format_size, tr};
 use egui::{Color32, Ui};
 use std::path::Path;
 
@@ -10,6 +10,7 @@ pub enum ChartAction {
 }
 
 pub struct ChartCtx<'a> {
+    pub lang: Lang,
     pub root: &'a Node,
     pub root_path: &'a Path,
     /// Path (from the scan root) of the directory shown by the chart.
@@ -26,13 +27,17 @@ pub fn tooltip(ui: &mut Ui, cx: &ChartCtx, path: &[usize]) {
     ui.label(cx.root.path_of(cx.root_path, path).display().to_string());
     ui.label(format!(
         "{} ({:.1}%)",
-        format_size(node.size),
+        format_size(cx.lang, node.size),
         node.size as f64 * 100.0 / total as f64
     ));
     if node.is_dir {
-        ui.label(format_items(node.items));
+        ui.label(format_items(cx.lang, node.items));
     }
-    ui.label(format!("Modified: {}", format_age(node.modified)));
+    ui.label(format!(
+        "{} {}",
+        tr(cx.lang, Key::ModifiedLabel),
+        format_age(cx.lang, node.modified)
+    ));
 }
 
 pub fn text_color_on(bg: Color32) -> Color32 {

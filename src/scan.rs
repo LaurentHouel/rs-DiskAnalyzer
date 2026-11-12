@@ -27,6 +27,41 @@ impl Node {
         Some(node)
     }
 
+    /// Removes the node reached through `path` and updates sizes and order of its ancestors.
+    pub fn remove(&mut self, path: &[usize]) -> Option<()> {
+        let (&first, rest) = path.split_first()?;
+        let (size, items) = if rest.is_empty() {
+            if first >= self.children.len() {
+                return None;
+            }
+            let c = self.children.remove(first);
+            (c.size, if c.is_dir { c.items + 1 } else { 1 })
+        } else {
+            let child = self.children.get_mut(first)?;
+            let before = (child.size, child.items);
+            child.remove(rest)?;
+            (before.0 - child.size, before.1 - child.items)
+        };
+        self.size = self.size.saturating_sub(size);
+        self.items = self.items.saturating_sub(items);
+        sort_children(&mut self.children);
+        Some(())
+    }
+
+    /// Inverse of [`Node::path_of`]: finds the index path of a filesystem path.
+    pub fn resolve(&self, root_path: &Path, target: &Path) -> Option<Vec<usize>> {
+        let rel = target.strip_prefix(root_path).ok()?;
+        let mut node = self;
+        let mut out = Vec::new();
+        for comp in rel.components() {
+            let name = comp.as_os_str().to_string_lossy();
+            let i = node.children.iter().position(|c| c.name == name)?;
+            out.push(i);
+            node = &node.children[i];
+        }
+        Some(out)
+    }
+
     /// Filesystem path of the node reached through `path`, given the scanned root's path.
     pub fn path_of(&self, root_path: &Path, path: &[usize]) -> PathBuf {
         let mut out = root_path.to_path_buf();
@@ -143,7 +178,7 @@ fn scan_dir(path: &Path, name: String, meta: &Metadata, shared: &Shared) -> Node
         })
         .collect();
 
-    children.sort_unstable_by(|a, b| b.size.cmp(&a.size).then_with(|| a.name.cmp(&b.name)));
+    sort_children(&mut children);
 
     let size = disk_size(meta, shared) + children.iter().map(|c| c.size).sum::<u64>();
     let items = children
@@ -159,6 +194,11 @@ fn scan_dir(path: &Path, name: String, meta: &Metadata, shared: &Shared) -> Node
         is_dir: true,
         children,
     }
+}
+
+/// Canonical order: decreasing size. Charts and index paths rely on it.
+fn sort_children(children: &mut [Node]) {
+    children.sort_unstable_by(|a, b| b.size.cmp(&a.size).then_with(|| a.name.cmp(&b.name)));
 }
 
 fn file_node(name: String, meta: &Metadata, shared: &Shared) -> Node {
@@ -223,6 +263,16 @@ mod tests {
         assert_eq!(root.children[0].name, "sub");
         assert_eq!(root.children[0].children[0].name, "big.bin");
         assert!(root.size >= 200_000);
+
+        let big = root.resolve(&dir, &dir.join("sub/big.bin")).unwrap();
+        assert_eq!(big, vec![0, 0]);
+        let (total, big_size) = (root.size, root.get(&big).unwrap().size);
+        let mut root = root;
+        root.remove(&big).unwrap();
+        assert_eq!(root.size, total - big_size);
+        assert_eq!(root.items, 2);
+        assert_eq!(root.children[0].name, "small.bin");
+        assert!(root.resolve(&dir, &dir.join("sub/big.bin")).is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 }
