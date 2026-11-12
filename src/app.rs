@@ -19,9 +19,9 @@ const CARD_GAP: f32 = 10.0;
 const ROW_H: f32 = 24.0;
 const INDENT: f32 = 16.0;
 const BAR_W: f32 = 56.0;
-const COL_SIZE: f32 = 84.0;
-const COL_ITEMS: f32 = 92.0;
-const COL_DATE: f32 = 96.0;
+const COL_SIZE: f32 = 100.0;
+const COL_ITEMS: f32 = 150.0;
+const COL_DATE: f32 = 100.0;
 
 #[derive(PartialEq, Clone, Copy)]
 enum ChartKind {
@@ -587,8 +587,8 @@ impl eframe::App for App {
 
         Panel::left("list")
             .resizable(true)
-            .default_size(560.0)
-            .size_range(320.0..=900.0)
+            .default_size(720.0)
+            .size_range(520.0..=1100.0)
             .show(ui, |ui| self.list(ui));
 
         Panel::bottom("chart_kind").show(ui, |ui| {
