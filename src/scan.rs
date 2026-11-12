@@ -168,10 +168,11 @@ fn scan_dir(path: &Path, name: String, meta: &Metadata, shared: &Shared) -> Node
             };
             let name = entry.file_name().to_string_lossy().into_owned();
             if md.file_type().is_dir() {
-                if device_id(&md) != shared.root_dev {
+                let child = entry.path();
+                if device_id(&md) != shared.root_dev || is_mirrored_mount(&child) {
                     return None;
                 }
-                Some(scan_dir(&entry.path(), name, &md, shared))
+                Some(scan_dir(&child, name, &md, shared))
             } else {
                 Some(file_node(name, &md, shared))
             }
@@ -215,6 +216,12 @@ fn file_node(name: String, meta: &Metadata, shared: &Shared) -> Node {
     }
 }
 
+/// On macOS the data volume is reachable twice: through the firmlinks (/Users, /Applications…)
+/// and under /System/Volumes, on the same device id. Counting both doubles the totals.
+fn is_mirrored_mount(path: &Path) -> bool {
+    cfg!(target_os = "macos") && path == Path::new("/System/Volumes")
+}
+
 #[cfg(unix)]
 fn device_id(meta: &Metadata) -> u64 {
     std::os::unix::fs::MetadataExt::dev(meta)
@@ -246,6 +253,15 @@ fn disk_size(meta: &Metadata, _shared: &Shared) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn macos_system_volumes_mirror_is_skipped() {
+        assert_eq!(
+            is_mirrored_mount(Path::new("/System/Volumes")),
+            cfg!(target_os = "macos")
+        );
+        assert!(!is_mirrored_mount(Path::new("/Users")));
+    }
 
     #[test]
     fn scans_sizes_counts_and_sorts() {
