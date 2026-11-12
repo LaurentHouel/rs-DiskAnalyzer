@@ -10,9 +10,15 @@ mod treemap;
 mod util;
 
 fn main() -> eframe::Result {
-    // Optional first argument: folder to scan at startup (handy when debugging).
-    // Without it, nothing is scanned until the user chooses a folder.
-    let start = std::env::args_os().nth(1).map(std::path::PathBuf::from);
+    // The app never scans on its own. Only the explicit `--scan <folder>` option (debugging aid)
+    // starts a scan at launch; any other argument, e.g. added by the OS, is ignored.
+    let mut args = std::env::args_os().skip(1);
+    let mut start = None;
+    while let Some(arg) = args.next() {
+        if arg == "--scan" {
+            start = args.next().map(std::path::PathBuf::from);
+        }
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 720.0])

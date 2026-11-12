@@ -32,7 +32,7 @@ Install the recommended extensions (`rust-analyzer`, `CodeLLDB`), set a breakpoi
 - *unit tests*
 - *Windows, MSVC debugger* (uses the C/C++ extension)
 
-The app does not scan anything at startup; it accepts an optional folder as first argument to scan it right away (`cargo run -- /some/folder`). Dependencies are compiled with optimizations in dev builds so the UI stays responsive, while this crate stays fully debuggable.
+The app does not scan anything at startup; only the explicit option `--scan <folder>` starts a scan at launch (`cargo run -- --scan /some/folder`); any other argument is ignored. Dependencies are compiled with optimizations in dev builds so the UI stays responsive, while this crate stays fully debuggable.
 
 ## Shortcuts
 

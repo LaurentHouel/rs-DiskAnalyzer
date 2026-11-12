@@ -119,6 +119,21 @@ impl App {
         self.scan = Some(scan::start(path, ctx.clone()));
     }
 
+    /// Back to the selection screen: drops the current result and cancels any running scan.
+    fn go_to_start_screen(&mut self) {
+        if let Some(scan) = self.scan.take() {
+            scan.cancel.store(true, Ordering::Relaxed);
+        }
+        self.root = None;
+        self.root_path = PathBuf::new();
+        self.view.clear();
+        self.selected = None;
+        self.expanded.clear();
+        self.pending_trash = None;
+        self.message = None;
+        self.drives = drives::list();
+    }
+
     fn poll_scan(&mut self) {
         let Some(scan) = &self.scan else { return };
         if let Ok(root) = scan.rx.try_recv() {
@@ -321,10 +336,8 @@ impl App {
             {
                 self.go_up();
             }
-            if ui.button("🏠").on_hover_text(tr(lang, Key::HomeTip)).clicked()
-                && let Some(home) = dirs::home_dir()
-            {
-                self.start_scan(&ctx, home);
+            if ui.button("🏠").on_hover_text(tr(lang, Key::StartScreenTip)).clicked() {
+                self.go_to_start_screen();
             }
             if ui
                 .button(format!("📂 {}", tr(lang, Key::Open)))

@@ -59,6 +59,7 @@ pub enum Key {
     ModifiedLabel,
     ParentTip,
     HomeTip,
+    StartScreenTip,
     Open,
     OpenTip,
     RescanTip,
@@ -108,6 +109,12 @@ pub fn tr(lang: Lang, key: Key) -> &'static str {
             "Dossier parent (Retour arrière)",
             "Carpeta superior (Retroceso)",
             "Übergeordneter Ordner (Rücktaste)",
+        ],
+        StartScreenTip => [
+            "Back to the selection screen",
+            "Retour à l’écran de sélection",
+            "Volver a la pantalla de selección",
+            "Zurück zur Auswahl",
         ],
         HomeTip => [
             "Scan home folder",

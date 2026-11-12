@@ -21,7 +21,7 @@
         "args": ["build", "--bin=rs-disk-analyzer"],
         "filter": { "name": "rs-disk-analyzer", "kind": "bin" }
       },
-      "args": ["${userHome}"],
+      "args": ["--scan", "${userHome}"],
       "cwd": "${workspaceFolder}",
       "env": { "RUST_BACKTRACE": "1" }
     },
@@ -33,7 +33,7 @@
         "args": ["build", "--bin=rs-disk-analyzer"],
         "filter": { "name": "rs-disk-analyzer", "kind": "bin" }
       },
-      "args": ["${workspaceFolder}/src"],
+      "args": ["--scan", "${workspaceFolder}/src"],
       "cwd": "${workspaceFolder}",
       "env": { "RUST_BACKTRACE": "1" }
     },
@@ -45,7 +45,7 @@
         "args": ["build", "--bin=rs-disk-analyzer"],
         "filter": { "name": "rs-disk-analyzer", "kind": "bin" }
       },
-      "args": ["${input:folderToScan}"],
+      "args": ["--scan", "${input:folderToScan}"],
       "cwd": "${workspaceFolder}",
       "env": { "RUST_BACKTRACE": "1" }
     },
@@ -65,7 +65,7 @@
       "type": "cppvsdbg",
       "request": "launch",
       "program": "${workspaceFolder}/target/debug/rs-disk-analyzer.exe",
-      "args": ["${workspaceFolder}/src"],
+      "args": ["--scan", "${workspaceFolder}/src"],
       "cwd": "${workspaceFolder}",
       "environment": [{ "name": "RUST_BACKTRACE", "value": "1" }],
       "preLaunchTask": "cargo build"
