@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Disk Analyzer
+Comment=Visualize disk usage with a treemap and rings chart
+Exec=rs-disk-analyzer
+Terminal=false
+Categories=Utility;System;
