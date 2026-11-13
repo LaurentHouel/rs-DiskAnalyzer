@@ -527,26 +527,42 @@ impl App {
 
         let mut action = None;
         let mut area = ScrollArea::vertical().auto_shrink([false, false]);
-        if self.scroll_to_selected {
-            if let Some(idx) = self
-                .selected
-                .as_ref()
-                .and_then(|sel| rows.iter().position(|r| &r.path == sel))
-            {
-                let offset = (idx as f32 * ROW_H - ui.available_height() / 2.0).max(0.0);
-                area = area.vertical_scroll_offset(offset);
-            }
-            self.scroll_to_selected = false;
+        let scroll_target = self
+            .selected
+            .as_ref()
+            .filter(|_| self.scroll_to_selected)
+            .and_then(|sel| rows.iter().position(|r| &r.path == sel));
+        if let Some(idx) = scroll_target {
+            let offset = (idx as f32 * ROW_H - ui.available_height() / 2.0).max(0.0);
+            area = area.vertical_scroll_offset(offset);
         }
 
-        area.show_rows(ui, ROW_H, rows.len(), |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for row in &rows[range] {
-                if let Some(a) = draw_row(ui, lang, row, self.selected.as_ref(), &self.expanded, self.col_widths) {
-                    action = Some(a);
-                }
+        let output = ui
+            .scope(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                area.show_rows(ui, ROW_H, rows.len(), |ui, range| {
+                    for row in &rows[range.clone()] {
+                        if let Some(a) = draw_row(
+                            ui,
+                            lang,
+                            row,
+                            self.selected.as_ref(),
+                            &self.expanded,
+                            self.col_widths,
+                        ) {
+                            action = Some(a);
+                        }
+                    }
+                    range
+                })
+            })
+            .inner;
+        if self.scroll_to_selected {
+            self.scroll_to_selected = scroll_target.is_some_and(|idx| !output.inner.contains(&idx));
+            if self.scroll_to_selected {
+                ui.ctx().request_repaint();
             }
-        });
+        }
 
         let root_path = self.root_path.clone();
         match action {
@@ -970,24 +986,25 @@ mod tests {
         let files = (0..40)
             .map(|i| Node {
                 name: format!("file-{i:02}.bin"),
-                size: 1,
+                size: 40 - i,
                 items: 1,
                 modified: None,
                 is_dir: false,
                 children: Vec::new(),
             })
             .collect();
+        let total_size = (1..=40).sum();
         let mut app = App::empty(Lang::En, Vec::new());
         app.root_path = PathBuf::from("/data");
         app.root = Some(Node {
             name: "/data".into(),
-            size: 40,
+            size: total_size,
             items: 40,
             modified: None,
             is_dir: true,
             children: vec![Node {
                 name: "folder".into(),
-                size: 40,
+                size: total_size,
                 items: 40,
                 modified: None,
                 is_dir: true,
@@ -1003,9 +1020,30 @@ mod tests {
         let point = egui::pos2(1070.0, 620.0);
         harness.hover_at(point);
         harness.run();
-        harness.drag_at(point);
-        harness.run();
-        harness.drop_at(point);
+        harness.event(egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+        harness.event(egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+
+        let selected = harness.state().selected.as_ref().unwrap();
+        assert!(selected[1] >= 30, "the chart click should select a low-ranked row");
+        assert!(harness.state().scroll_to_selected);
+
+        harness.step();
+        assert!(
+            !harness.state().scroll_to_selected,
+            "the selected row should be visible after scrolling"
+        );
         harness.run();
 
         let app = harness.state();
