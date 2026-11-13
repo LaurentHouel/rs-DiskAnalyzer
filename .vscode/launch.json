@@ -61,13 +61,16 @@
       "cwd": "${workspaceFolder}"
     },
     {
-      "name": "Debug (Windows, MSVC debugger)",
-      "type": "cppvsdbg",
+      "name": "Debug (Windows, CodeLLDB)",
+      "type": "lldb",
       "request": "launch",
       "program": "${workspaceFolder}/target/debug/rs-disk-analyzer.exe",
       "args": ["--scan", "${workspaceFolder}/src"],
       "cwd": "${workspaceFolder}",
-      "environment": [{ "name": "RUST_BACKTRACE", "value": "1" }],
+      "env": {
+        "RUST_BACKTRACE": "1",
+        "WGPU_BACKEND": "dx12"
+      },
       "preLaunchTask": "cargo build"
     }
   ],
