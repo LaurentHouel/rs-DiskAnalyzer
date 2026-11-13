@@ -3,7 +3,7 @@
 Cross-platform (macOS, Windows, Linux) disk usage analyzer written in Rust with [egui](https://github.com/emilk/egui).
 
 - Fast parallel scan of any folder, started only when you choose one: a mounted drive (internal SSD/HDD, removable, network, optical, with free space), the home folder, a folder picker or a recent folder
-- Folder tree with size, item count and modification date; click a column header to sort
+- Folder tree with size, item count and modification date; click a column header to sort, drag the edge of a header to resize columns (double-click to reset)
 - Treemap and rings charts, synchronized with the tree
 - Move files and folders to the trash (context menu, toolbar button, `Delete` key)
 - Languages: English, Français, Español, Deutsch (English by default, switchable in the toolbar; your choice is remembered)

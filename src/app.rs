@@ -19,9 +19,9 @@ const CARD_GAP: f32 = 10.0;
 const ROW_H: f32 = 24.0;
 const INDENT: f32 = 16.0;
 const BAR_W: f32 = 56.0;
-const COL_SIZE: f32 = 100.0;
-const COL_ITEMS: f32 = 150.0;
-const COL_DATE: f32 = 100.0;
+const DEFAULT_COLS: [f32; 3] = [100.0, 150.0, 100.0];
+const COL_MIN: f32 = 60.0;
+const NAME_COL_MIN: f32 = 160.0;
 
 #[derive(PartialEq, Clone, Copy)]
 enum ChartKind {
@@ -71,6 +71,8 @@ pub struct App {
     message: Option<(bool, String)>,
     recent: Vec<PathBuf>,
     drives: Vec<Drive>,
+    /// Widths of the Size, Contents and Modified columns.
+    col_widths: [f32; 3],
 }
 
 impl App {
@@ -86,6 +88,9 @@ impl App {
             .map(|r| r.lines().map(PathBuf::from).collect())
             .unwrap_or_default();
         let mut app = Self::empty(lang, recent);
+        if let Some(w) = cc.storage.and_then(|s| s.get_string("cols")).and_then(|c| parse_widths(&c)) {
+            app.col_widths = w;
+        }
         if let Some(start) = start {
             app.start_scan(&cc.egui_ctx, start);
         }
@@ -109,6 +114,7 @@ impl App {
             message: None,
             recent,
             drives: drives::list(),
+            col_widths: DEFAULT_COLS,
         }
     }
 
@@ -412,7 +418,7 @@ impl App {
 
     fn header(&mut self, ui: &mut Ui) {
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
-        let cols = Columns::new(rect);
+        let cols = Columns::new(rect, self.col_widths);
         let spans = [
             (SortKey::Name, Key::Folder, rect.left(), cols.name_right, cols.name_right),
             (SortKey::Size, Key::Size, cols.name_right, cols.size_right, cols.size_right),
@@ -459,6 +465,30 @@ impl App {
                 }
             }
         }
+
+        // Drag handles on the left edge of the Size, Contents and Modified columns.
+        let max_total = rect.width() - 8.0 - NAME_COL_MIN;
+        for (i, x) in [cols.name_right, cols.size_right, cols.items_right].into_iter().enumerate() {
+            let hit = Rect::from_min_max(pos2(x - 4.0, rect.top()), pos2(x + 4.0, rect.bottom()));
+            let resp = ui
+                .interact(hit, ui.scope_id().with(("col_resize", i)), Sense::drag())
+                .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+            if resp.dragged() {
+                let others: f32 = self.col_widths.iter().sum::<f32>() - self.col_widths[i];
+                let max = (max_total - others).max(COL_MIN);
+                self.col_widths[i] = (self.col_widths[i] - resp.drag_delta().x).clamp(COL_MIN, max);
+            }
+            if resp.double_clicked() {
+                self.col_widths[i] = DEFAULT_COLS[i];
+            }
+            let active = resp.hovered() || resp.dragged();
+            let color = if active {
+                ui.visuals().selection.stroke.color
+            } else {
+                ui.visuals().widgets.noninteractive.bg_stroke.color
+            };
+            ui.painter().vline(x, rect.y_range().shrink(4.0), Stroke::new(if active { 2.0 } else { 1.0 }, color));
+        }
     }
 
     fn list(&mut self, ui: &mut Ui) {
@@ -478,7 +508,7 @@ impl App {
         );
 
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
-        let cols = Columns::new(rect);
+        let cols = Columns::new(rect, self.col_widths);
         let p = ui.painter();
         let y = rect.center().y;
         let strong = ui.visuals().strong_text_color();
@@ -512,7 +542,7 @@ impl App {
         area.show_rows(ui, ROW_H, rows.len(), |ui, range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for row in &rows[range] {
-                if let Some(a) = draw_row(ui, lang, row, self.selected.as_ref(), &self.expanded) {
+                if let Some(a) = draw_row(ui, lang, row, self.selected.as_ref(), &self.expanded, self.col_widths) {
                     action = Some(a);
                 }
             }
@@ -574,6 +604,8 @@ impl eframe::App for App {
         storage.set_string("lang", self.lang.code().to_owned());
         let recent: Vec<String> = self.recent.iter().map(|p| p.display().to_string()).collect();
         storage.set_string("recent", recent.join("\n"));
+        let cols: Vec<String> = self.col_widths.iter().map(|w| w.to_string()).collect();
+        storage.set_string("cols", cols.join(","));
     }
 }
 
@@ -644,6 +676,12 @@ impl App {
     }
 }
 
+fn parse_widths(s: &str) -> Option<[f32; 3]> {
+    let v: Vec<f32> = s.split(',').filter_map(|p| p.parse().ok()).collect();
+    let w: [f32; 3] = v.try_into().ok()?;
+    w.iter().all(|x| (COL_MIN..=1000.0).contains(x)).then_some(w)
+}
+
 struct Columns {
     size_right: f32,
     items_right: f32,
@@ -652,15 +690,15 @@ struct Columns {
 }
 
 impl Columns {
-    fn new(rect: Rect) -> Self {
+    fn new(rect: Rect, widths: [f32; 3]) -> Self {
         let date_right = rect.right() - 8.0;
-        let items_right = date_right - COL_DATE;
-        let size_right = items_right - COL_ITEMS;
+        let items_right = date_right - widths[2];
+        let size_right = items_right - widths[1];
         Self {
             size_right,
             items_right,
             date_right,
-            name_right: size_right - COL_SIZE,
+            name_right: size_right - widths[0],
         }
     }
 }
@@ -709,9 +747,10 @@ fn draw_row(
     row: &Row,
     selected: Option<&Vec<usize>>,
     expanded: &HashSet<Vec<usize>>,
+    widths: [f32; 3],
 ) -> Option<ListAction> {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
-    let cols = Columns::new(rect);
+    let cols = Columns::new(rect, widths);
     let visuals = ui.visuals().clone();
     let node = row.node;
     let is_selected = selected == Some(&row.path);
@@ -915,5 +954,48 @@ mod tests {
         assert!(harness.state().root.is_none());
         assert!(harness.state().scan.is_none());
         harness.get_by_label("Choose what to scan. Nothing is scanned until you ask.");
+    }
+
+    #[test]
+    fn dragging_a_header_edge_resizes_the_column() {
+        let mut app = App::empty(Lang::En, Vec::new());
+        app.root = Some(sample_root());
+        app.root_path = PathBuf::from("/data");
+        let mut harness = Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1100.0, 700.0))
+            .build_ui_state(|ui, app: &mut App| app.show(ui), app);
+        harness.run();
+
+        // Probe the header row for a resize handle: press, move left by 30px, release.
+        let before = harness.state().col_widths;
+        let mut found = false;
+        'probe: for y in [40.0, 46.0, 52.0, 58.0, 64.0, 70.0] {
+            for x in (250..520).step_by(2) {
+                let x = x as f32;
+                harness.hover_at(egui::pos2(x, y));
+                harness.run();
+                harness.drag_at(egui::pos2(x, y));
+                harness.run();
+                harness.hover_at(egui::pos2(x - 30.0, y));
+                harness.run();
+                harness.drop_at(egui::pos2(x - 30.0, y));
+                harness.run();
+                if harness.state().col_widths != before {
+                    found = true;
+                    break 'probe;
+                }
+            }
+        }
+        assert!(found, "no resize handle found");
+        let after = harness.state().col_widths;
+        assert!(after.iter().zip(before).any(|(a, b)| a > &b));
+    }
+
+    #[test]
+    fn stored_column_widths_are_validated() {
+        assert_eq!(parse_widths("90,140,110"), Some([90.0, 140.0, 110.0]));
+        assert_eq!(parse_widths("5,140,110"), None);
+        assert_eq!(parse_widths("90,140"), None);
     }
 }
