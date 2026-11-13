@@ -20,3 +20,5 @@ strip = true
 # Keep our own code fully debuggable while making dependencies (egui, rayon…) fast.
 [profile.dev.package."*"]
 opt-level = 3
+# No debug info for dependencies: they dominate target/ size and are not stepped through.
+debug = false
