@@ -587,9 +587,18 @@ impl App {
             ChartKind::Treemap => treemap::show(ui, &cx),
         };
         match action {
-            Some(ChartAction::Select(p)) => self.select(p, true),
-            Some(ChartAction::Open(p)) => self.open(p),
-            Some(ChartAction::Up) => self.go_up(),
+            Some(ChartAction::Select(p)) => {
+                self.select(p, true);
+                ui.ctx().request_repaint();
+            }
+            Some(ChartAction::Open(p)) => {
+                self.open(p);
+                ui.ctx().request_repaint();
+            }
+            Some(ChartAction::Up) => {
+                self.go_up();
+                ui.ctx().request_repaint();
+            }
             None => {}
         }
     }
@@ -954,6 +963,62 @@ mod tests {
         assert!(harness.state().root.is_none());
         assert!(harness.state().scan.is_none());
         harness.get_by_label("Choose what to scan. Nothing is scanned until you ask.");
+    }
+
+    #[test]
+    fn chart_selection_expands_and_scrolls_the_list_to_the_selected_item() {
+        let files = (0..40)
+            .map(|i| Node {
+                name: format!("file-{i:02}.bin"),
+                size: 1,
+                items: 1,
+                modified: None,
+                is_dir: false,
+                children: Vec::new(),
+            })
+            .collect();
+        let mut app = App::empty(Lang::En, Vec::new());
+        app.root_path = PathBuf::from("/data");
+        app.root = Some(Node {
+            name: "/data".into(),
+            size: 40,
+            items: 40,
+            modified: None,
+            is_dir: true,
+            children: vec![Node {
+                name: "folder".into(),
+                size: 40,
+                items: 40,
+                modified: None,
+                is_dir: true,
+                children: files,
+            }],
+        });
+        let mut harness = Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1100.0, 700.0))
+            .build_ui_state(|ui, app: &mut App| app.show(ui), app);
+        harness.run();
+
+        let point = egui::pos2(1070.0, 620.0);
+        harness.hover_at(point);
+        harness.run();
+        harness.drag_at(point);
+        harness.run();
+        harness.drop_at(point);
+        harness.run();
+
+        let app = harness.state();
+        let selected = app
+            .selected
+            .as_ref()
+            .expect("chart click should select an item");
+        assert_eq!(selected.len(), 2);
+        assert!(app.expanded.contains(&selected[..1].to_vec()));
+        assert!(
+            !app.scroll_to_selected,
+            "the list should process the chart's scroll-to-selection request"
+        );
     }
 
     #[test]
