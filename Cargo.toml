@@ -22,3 +22,6 @@ strip = true
 opt-level = 3
 # No debug info for dependencies: they dominate target/ size and are not stepped through.
 debug = false
+
+[dev-dependencies]
+egui_kittest = "0.37"

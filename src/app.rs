@@ -85,7 +85,15 @@ impl App {
             .and_then(|s| s.get_string("recent"))
             .map(|r| r.lines().map(PathBuf::from).collect())
             .unwrap_or_default();
-        let mut app = Self {
+        let mut app = Self::empty(lang, recent);
+        if let Some(start) = start {
+            app.start_scan(&cc.egui_ctx, start);
+        }
+        app
+    }
+
+    fn empty(lang: Lang, recent: Vec<PathBuf>) -> Self {
+        Self {
             root: None,
             root_path: PathBuf::new(),
             view: Vec::new(),
@@ -101,11 +109,7 @@ impl App {
             message: None,
             recent,
             drives: drives::list(),
-        };
-        if let Some(start) = start {
-            app.start_scan(&cc.egui_ctx, start);
         }
-        app
     }
 
     fn start_scan(&mut self, ctx: &egui::Context, path: PathBuf) {
@@ -563,6 +567,18 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        self.show(ui);
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string("lang", self.lang.code().to_owned());
+        let recent: Vec<String> = self.recent.iter().map(|p| p.display().to_string()).collect();
+        storage.set_string("recent", recent.join("\n"));
+    }
+}
+
+impl App {
+    fn show(&mut self, ui: &mut Ui) {
         self.poll_scan();
         if self.scan.is_some() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
@@ -625,12 +641,6 @@ impl eframe::App for App {
 
         CentralPanel::default().show(ui, |ui| self.chart_panel(ui));
         self.trash_dialog(ui.ctx());
-    }
-
-    fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        storage.set_string("lang", self.lang.code().to_owned());
-        let recent: Vec<String> = self.recent.iter().map(|p| p.display().to_string()).collect();
-        storage.set_string("recent", recent.join("\n"));
     }
 }
 
@@ -859,4 +869,51 @@ fn drive_card(ui: &mut Ui, lang: Lang, drive: &Drive) -> bool {
     );
 
     resp.on_hover_text(drive.mount.display().to_string()).clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    fn sample_root() -> Node {
+        let file = |name: &str, size| Node {
+            name: name.into(),
+            size,
+            items: 1,
+            modified: None,
+            is_dir: false,
+            children: Vec::new(),
+        };
+        Node {
+            name: "/data".into(),
+            size: 30,
+            items: 2,
+            modified: None,
+            is_dir: true,
+            children: vec![file("big.bin", 20), file("small.bin", 10)],
+        }
+    }
+
+    #[test]
+    fn home_button_returns_to_selection_screen_without_scanning() {
+        let mut app = App::empty(Lang::En, Vec::new());
+        app.root = Some(sample_root());
+        app.root_path = PathBuf::from("/data");
+        // The test context has no system font fallback for the toolbar icons.
+        let mut harness = Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1100.0, 700.0))
+            .build_ui_state(|ui, app: &mut App| app.show(ui), app);
+        harness.run();
+        assert!(harness.query_by_label("Choose what to scan. Nothing is scanned until you ask.").is_none());
+
+        harness.get_by_label("🏠").click();
+        harness.run();
+
+        assert!(harness.state().root.is_none());
+        assert!(harness.state().scan.is_none());
+        harness.get_by_label("Choose what to scan. Nothing is scanned until you ask.");
+    }
 }
