@@ -1,11 +1,12 @@
 use rayon::prelude::*;
-use std::collections::HashSet;
 use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime};
+#[cfg(unix)]
+use std::{collections::HashSet, sync::Mutex};
 
 /// A file or directory. Children are sorted by decreasing size.
 pub struct Node {
@@ -96,6 +97,7 @@ pub struct ScanHandle {
 struct Shared {
     progress: Arc<Progress>,
     cancel: Arc<AtomicBool>,
+    #[cfg(unix)]
     seen_inodes: Mutex<HashSet<(u64, u64)>>,
     #[cfg_attr(not(unix), allow(dead_code))]
     root_dev: u64,
@@ -119,6 +121,7 @@ pub fn start(path: PathBuf, ctx: egui::Context) -> ScanHandle {
         let shared = Shared {
             progress,
             cancel: cancel.clone(),
+            #[cfg(unix)]
             seen_inodes: Mutex::new(HashSet::new()),
             root_dev: meta.as_ref().map(device_id).unwrap_or(0),
         };
