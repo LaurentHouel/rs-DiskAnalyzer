@@ -387,110 +387,131 @@ impl App {
     }
 
     /// Start page: nothing is scanned until the user picks a folder.
+    /// The layout follows the window size and scrolls when the window is short.
     fn welcome_screen(&mut self, ui: &mut Ui) {
         let lang = self.lang;
         let pal = theme::Palette::new(ui.visuals().dark_mode);
+        let logo = self.logo_texture(ui.ctx());
+        let compact = ui.available_height() < 560.0;
         let mut chosen = None;
-        ui.vertical_centered(|ui| {
-            ui.set_max_width(920.0);
-            ui.add_space((ui.available_height() * 0.06).min(36.0));
-            let logo = self.logo_texture(ui.ctx());
-            egui::Frame::new()
-                .fill(pal.hero_fill)
-                .stroke(Stroke::new(1.0, pal.hero_stroke))
-                .corner_radius(CornerRadius::same(18))
-                .inner_margin(egui::Margin::same(26))
-                .show(ui, |ui| {
-                    let width = (ui.available_width() - 52.0).clamp(560.0, 820.0);
-                    ui.set_width(width);
-                    ui.set_min_height(132.0);
-                    let right = ui.max_rect().left() + width;
-                    let left = ui.vertical(|ui| {
-                        ui.heading(
-                            egui::RichText::new(tr(lang, Key::WelcomeTitle))
-                                .size(28.0)
-                                .strong()
-                                .color(pal.hero_title),
-                        );
-                        ui.add_space(4.0);
-                        ui.label(
-                            egui::RichText::new(tr(lang, Key::WelcomeHint))
-                                .size(15.0)
-                                .color(pal.hero_text),
-                        );
-                        ui.add_space(18.0);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 8.0;
-                            let open = Btn::icon(Icon::Folder, tr(lang, Key::OpenTip))
-                                .with_text(tr(lang, Key::Open))
-                                .icon_color(pal.accent);
-                            if tool_button(ui, &pal, true, open).clicked() {
-                                chosen = rfd::FileDialog::new().pick_folder();
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let full = ui.available_width();
+            let w = (full - 32.0).clamp(240.0, 880.0);
+            ui.horizontal_top(|ui| {
+                ui.add_space(((full - w) / 2.0).max(0.0));
+                ui.vertical(|ui| {
+                    ui.set_width(w);
+                    ui.add_space(if compact { 6.0 } else { 24.0 });
+
+                    let margin = if compact { 16.0 } else { 26.0 };
+                    egui::Frame::new()
+                        .fill(pal.hero_fill)
+                        .stroke(Stroke::new(1.0, pal.hero_stroke))
+                        .corner_radius(CornerRadius::same(18))
+                        .inner_margin(egui::Margin::same(margin as i8))
+                        .show(ui, |ui| {
+                            let inner = w - 2.0 * margin - 2.0;
+                            ui.set_width(inner);
+                            let logo_size = if compact { 84.0 } else { 128.0 };
+                            let show_logo = inner >= 460.0;
+                            let text_w = if show_logo { inner - logo_size - 16.0 } else { inner };
+                            if !compact {
+                                ui.set_min_height(logo_size + 4.0);
                             }
-                            let home = Btn::icon(Icon::Home, tr(lang, Key::HomeTip))
-                                .with_text(tr(lang, Key::HomeTip));
-                            if tool_button(ui, &pal, true, home).clicked() {
-                                chosen = dirs::home_dir();
+                            let right = ui.max_rect().left() + inner;
+                            let title_size = if compact || inner < 400.0 { 22.0 } else { 28.0 };
+                            let left = ui.vertical(|ui| {
+                                ui.set_max_width(text_w);
+                                ui.heading(
+                                    egui::RichText::new(tr(lang, Key::WelcomeTitle))
+                                        .size(title_size)
+                                        .strong()
+                                        .color(pal.hero_title),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(tr(lang, Key::WelcomeHint))
+                                        .size(if compact { 13.5 } else { 15.0 })
+                                        .color(pal.hero_text),
+                                );
+                                ui.add_space(if compact { 10.0 } else { 18.0 });
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                                    let open = Btn::icon(Icon::Folder, tr(lang, Key::OpenTip))
+                                        .with_text(tr(lang, Key::Open))
+                                        .icon_color(pal.accent);
+                                    if tool_button(ui, &pal, true, open).clicked() {
+                                        chosen = rfd::FileDialog::new().pick_folder();
+                                    }
+                                    let home = Btn::icon(Icon::Home, tr(lang, Key::HomeTip))
+                                        .with_text(tr(lang, Key::HomeTip));
+                                    if tool_button(ui, &pal, true, home).clicked() {
+                                        chosen = dirs::home_dir();
+                                    }
+                                });
+                            });
+                            if show_logo {
+                                let center = pos2(right - logo_size / 2.0, left.response.rect.center().y);
+                                ui.painter().image(
+                                    logo,
+                                    Rect::from_center_size(center, vec2(logo_size, logo_size)),
+                                    Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                                    Color32::WHITE,
+                                );
                             }
                         });
-                    });
-                    let size = 128.0;
-                    let center = pos2(right - size / 2.0, left.response.rect.center().y);
-                    ui.painter().image(
-                        logo,
-                        Rect::from_center_size(center, vec2(size, size)),
-                        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                        Color32::WHITE,
-                    );
-                });
 
-            if !self.drives.is_empty() {
-                ui.add_space(24.0);
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(tr(lang, Key::Drives)).size(17.0).strong());
-                    let tip = tr(lang, Key::RescanTip);
-                    if tool_button(ui, &pal, true, Btn::icon(Icon::Refresh, tip))
-                        .on_hover_text(tip)
-                        .clicked()
-                    {
-                        self.drives = drives::list();
+                    if !self.drives.is_empty() {
+                        ui.add_space(if compact { 14.0 } else { 24.0 });
+                        let card_w = CARD_W.min(w);
+                        let per_row = (((w + CARD_GAP) / (card_w + CARD_GAP)) as usize).clamp(1, 4);
+                        let block = per_row.min(self.drives.len()) as f32 * (card_w + CARD_GAP) - CARD_GAP;
+                        ui.horizontal(|ui| {
+                            ui.add_space(((w - block) / 2.0).max(0.0));
+                            ui.label(egui::RichText::new(tr(lang, Key::Drives)).size(17.0).strong());
+                            let tip = tr(lang, Key::RescanTip);
+                            if tool_button(ui, &pal, true, Btn::icon(Icon::Refresh, tip))
+                                .on_hover_text(tip)
+                                .clicked()
+                            {
+                                self.drives = drives::list();
+                            }
+                        });
+                        ui.add_space(6.0);
+                        for row in self.drives.chunks(per_row) {
+                            let used = row.len() as f32 * (card_w + CARD_GAP) - CARD_GAP;
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = CARD_GAP;
+                                ui.add_space(((w - used) / 2.0).max(0.0));
+                                for drive in row {
+                                    if drive_card(ui, lang, drive, card_w) {
+                                        chosen = Some(drive.mount.clone());
+                                    }
+                                }
+                            });
+                        }
                     }
-                });
-                ui.add_space(6.0);
-                let per_row =
-                    (((ui.available_width() + CARD_GAP) / (CARD_W + CARD_GAP)) as usize).clamp(1, 4);
-                for row in self.drives.chunks(per_row) {
-                    let used = row.len() as f32 * (CARD_W + CARD_GAP) - CARD_GAP;
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = CARD_GAP;
-                        ui.add_space(((ui.available_width() - used) / 2.0).max(0.0));
-                        for drive in row {
-                            if drive_card(ui, lang, drive) {
-                                chosen = Some(drive.mount.clone());
+
+                    if !self.recent.is_empty() {
+                        ui.add_space(if compact { 14.0 } else { 24.0 });
+                        ui.vertical_centered(|ui| {
+                            ui.label(egui::RichText::new(tr(lang, Key::Recent)).size(17.0).strong());
+                        });
+                        for path in &self.recent {
+                            let label = path.display().to_string();
+                            let recent = egui::Button::new(label.clone())
+                                .fill(pal.btn_fill)
+                                .stroke(Stroke::new(1.0, pal.btn_border))
+                                .corner_radius(CornerRadius::same(9))
+                                .truncate();
+                            if ui.add_sized(vec2(w, 36.0), recent).on_hover_text(&label).clicked() {
+                                chosen = Some(path.clone());
                             }
                         }
-                    });
-                }
-            }
-
-            if !self.recent.is_empty() {
-                ui.add_space(24.0);
-                ui.label(egui::RichText::new(tr(lang, Key::Recent)).size(17.0).strong());
-                for path in &self.recent {
-                    let label = path.display().to_string();
-                    let recent = egui::Button::new(label.clone())
-                        .fill(pal.btn_fill)
-                        .stroke(Stroke::new(1.0, pal.btn_border))
-                        .corner_radius(CornerRadius::same(9));
-                    if ui
-                        .add_sized(vec2(ui.available_width(), 36.0), recent)
-                        .on_hover_text(&label)
-                        .clicked()
-                    {
-                        chosen = Some(path.clone());
                     }
-                }
-            }
+                    ui.add_space(16.0);
+                });
+            });
         });
         if let Some(path) = chosen {
             self.start_scan(ui.ctx(), path);
@@ -692,18 +713,21 @@ impl App {
         };
         // While scanning, the Cancel button sits to the right of the progress pill.
         let mut pill_right = rect.right();
-        if let Some(scan) = &self.scan {
+        let mut cancelled = false;
+        if self.scan.is_some() {
             let cancel = Btn::icon(Icon::Close, tr(lang, Key::Cancel)).with_text(tr(lang, Key::Cancel));
             let layout = egui::Layout::right_to_left(egui::Align::Center);
             let button = ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(layout), |ui| {
                 tool_button(ui, &pal, true, cancel)
             });
-            if button.inner.clicked() {
-                scan.cancel.store(true, Ordering::Relaxed);
-            }
+            cancelled = button.inner.clicked();
             pill_right = button.inner.rect.left() - 8.0;
         }
         status_pill(ui, &pal, pos2(pill_right, cy), &text, dot);
+        if cancelled {
+            // Cancelling abandons the scan and goes back to the start screen.
+            self.go_to_start_screen();
+        }
     }
 
     fn header(&mut self, ui: &mut Ui) {
@@ -1186,8 +1210,8 @@ fn draw_row(
     action
 }
 
-fn drive_card(ui: &mut Ui, lang: Lang, drive: &Drive) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(vec2(CARD_W, CARD_H), Sense::click());
+fn drive_card(ui: &mut Ui, lang: Lang, drive: &Drive, width: f32) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, CARD_H), Sense::click());
     let visuals = ui.visuals();
     let pal = theme::Palette::new(visuals.dark_mode);
     let fill = if resp.hovered() {
@@ -1490,6 +1514,27 @@ mod tests {
         harness.run();
         assert!(harness.state().view.is_empty());
     }
+
+    #[test]
+    fn cancelling_a_scan_returns_to_the_start_screen() {
+        let app = App::empty(Lang::En, Vec::new());
+        let mut harness = Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1100.0, 700.0))
+            .build_ui_state(|ui, app: &mut App| app.show(ui), app);
+        let ctx = harness.ctx.clone();
+        harness.state_mut().start_scan(&ctx, PathBuf::from("/"));
+        harness.step();
+        assert!(harness.state().scan.is_some());
+
+        harness.get_by_label("Cancel").click();
+        harness.run();
+
+        assert!(harness.state().scan.is_none());
+        assert!(harness.state().root.is_none());
+        harness.get_by_label("Choose what to scan. Nothing is scanned until you ask.");
+    }
+
 
     #[test]
     fn stored_column_widths_are_validated() {
