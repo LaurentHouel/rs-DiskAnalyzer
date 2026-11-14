@@ -4,14 +4,14 @@ use crate::icons::Icon;
 use crate::scan::{self, Node, ScanHandle};
 use crate::i18n::{Key, Lang, format_age, format_duration, format_items, format_size, tr, trf};
 use crate::util::{delete_permanently, reveal_in_file_manager};
-use crate::widgets::{Btn, divider, status_pill, tool_button};
+use crate::widgets::{Btn, Crumb, breadcrumb, divider, status_pill, tool_button};
 use crate::{rings, theme, treemap};
 use egui::{
     Align2, CentralPanel, Color32, CornerRadius, FontId, Panel, Rect, ScrollArea, Sense, Shape,
     Stroke, StrokeKind, Ui, pos2, vec2,
 };
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Component, PathBuf};
 use std::sync::atomic::Ordering;
 
 const MAX_RECENT: usize = 5;
@@ -497,11 +497,39 @@ impl App {
         }
     }
 
-    fn display_path(&self) -> String {
-        self.root
-            .as_ref()
-            .map(|r| r.path_of(&self.root_path, &self.view).display().to_string())
-            .unwrap_or_default()
+    /// Path of the folder shown by the charts, one element per folder. Folders above the scan root
+    /// are listed for context but cannot be opened; the others navigate inside the scan.
+    fn crumbs(&self) -> Vec<Crumb> {
+        let Some(root) = &self.root else { return Vec::new() };
+        let mut crumbs: Vec<Crumb> = Vec::new();
+        for component in self.root_path.components() {
+            let label = match component {
+                Component::Prefix(p) => p.as_os_str().to_string_lossy().into_owned(),
+                Component::RootDir if crumbs.is_empty() => std::path::MAIN_SEPARATOR.to_string(),
+                Component::Normal(n) => n.to_string_lossy().into_owned(),
+                _ => continue,
+            };
+            crumbs.push(Crumb { label, depth: None, current: false });
+        }
+        if let Some(scan_root) = crumbs.last_mut() {
+            scan_root.depth = Some(0);
+        }
+        for i in 1..=self.view.len() {
+            let Some(node) = root.get(&self.view[..i]) else { break };
+            crumbs.push(Crumb { label: node.name.clone(), depth: Some(i), current: false });
+        }
+        if let Some(last) = crumbs.last_mut() {
+            last.current = true;
+        }
+        crumbs
+    }
+
+    /// Shows the folder at `depth` levels below the scan root.
+    fn navigate_to(&mut self, depth: usize) {
+        if depth < self.view.len() {
+            self.view.truncate(depth);
+            self.selected = None;
+        }
     }
 
     fn toolbar(&mut self, ui: &mut Ui) {
@@ -547,13 +575,10 @@ impl App {
                 self.pending_trash = self.selected.clone();
             }
 
-            // Keep room for the right-hand group (language, theme, cancel).
-            let path = self.display_path();
-            if !path.is_empty() {
-                ui.scope(|ui| {
-                    ui.set_max_width((ui.available_width() - 330.0).max(0.0));
-                    ui.add(egui::Label::new(egui::RichText::new(path).weak()).truncate());
-                });
+            // Keep room for the right-hand group (language and theme buttons).
+            let crumbs = self.crumbs();
+            if let Some(depth) = breadcrumb(ui, &pal, &crumbs, (ui.available_width() - 230.0).max(0.0)) {
+                self.navigate_to(depth);
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1427,6 +1452,43 @@ mod tests {
         harness.get_by_label("More information…").click();
         harness.run();
         assert!(harness.state().info.is_some());
+    }
+
+    #[test]
+    fn clicking_a_path_element_navigates_up_the_tree() {
+        let leaf = |name: &str| Node {
+            name: name.into(),
+            size: 10,
+            items: 1,
+            modified: None,
+            is_dir: false,
+            children: Vec::new(),
+        };
+        let dir = |name: &str, children: Vec<Node>| Node {
+            name: name.into(),
+            size: 10,
+            items: 1,
+            modified: None,
+            is_dir: true,
+            children,
+        };
+        let mut app = App::empty(Lang::En, Vec::new());
+        app.root_path = PathBuf::from("/data");
+        app.root = Some(dir("/data", vec![dir("outer", vec![dir("inner", vec![leaf("f.bin")])])]));
+        app.view = vec![0, 0];
+        let mut harness = Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1100.0, 700.0))
+            .build_ui_state(|ui, app: &mut App| app.show(ui), app);
+        harness.run();
+
+        harness.get_by_label("outer").click();
+        harness.run();
+        assert_eq!(harness.state().view, vec![0]);
+
+        harness.get_by_label("data").click();
+        harness.run();
+        assert!(harness.state().view.is_empty());
     }
 
     #[test]

@@ -5,6 +5,7 @@ use std::f32::consts::{PI, TAU};
 #[derive(Clone, Copy, PartialEq)]
 pub enum Icon {
     Back,
+    ChevronRight,
     Home,
     Folder,
     Refresh,
@@ -97,6 +98,7 @@ pub fn paint(p: &Painter, icon: Icon, rect: Rect, color: Color32) {
             line(vec![(6.0, 6.0), (18.0, 18.0)], false);
             line(vec![(18.0, 6.0), (6.0, 18.0)], false);
         }
+        Icon::ChevronRight => line(vec![(9.0, 5.5), (15.5, 12.0), (9.0, 18.5)], false),
         Icon::ChevronDown => line(vec![(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)], false),
         Icon::Home => {
             line(rounded(&[(3.0, 11.0), (12.0, 3.0), (21.0, 11.0)], 1.0, false), false);

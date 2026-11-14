@@ -112,3 +112,71 @@ pub fn status_pill(ui: &mut Ui, pal: &Palette, right_center: egui::Pos2, text: &
     p.galley(pos2(rect.left() + 29.0, rect.center().y - galley.size().y / 2.0), galley, weak);
     rect
 }
+
+/// One element of the path shown above the list.
+pub struct Crumb {
+    pub label: String,
+    /// Depth to navigate to when clicked; `None` when the element cannot be opened.
+    pub depth: Option<usize>,
+    pub current: bool,
+}
+
+/// Clickable path ("breadcrumb"); returns the depth of the clicked element.
+/// Leading elements are replaced by an ellipsis when `max_width` is too small.
+pub fn breadcrumb(ui: &mut Ui, pal: &Palette, crumbs: &[Crumb], max_width: f32) -> Option<usize> {
+    const SEP: f32 = 14.0;
+    const PAD: f32 = 6.0;
+    let font = FontId::proportional(14.0);
+    let width_of = |ui: &Ui, text: &str| {
+        ui.painter().layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE).size().x + 2.0 * PAD
+    };
+    let widths: Vec<f32> = crumbs.iter().map(|c| width_of(ui, &c.label)).collect();
+
+    let mut start = 0;
+    let mut total: f32 = widths.iter().sum::<f32>() + SEP * crumbs.len().saturating_sub(1) as f32;
+    while total > max_width && start + 1 < crumbs.len() {
+        total -= widths[start] + SEP;
+        start += 1;
+    }
+
+    let mut clicked = None;
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        if start > 0 {
+            ui.label(egui::RichText::new("…").color(pal.btn_disabled));
+            separator(ui, pal);
+        }
+        for (i, crumb) in crumbs.iter().enumerate().skip(start) {
+            if i > start {
+                separator(ui, pal);
+            }
+            let sense = if crumb.depth.is_some() { Sense::click() } else { Sense::hover() };
+            let (rect, resp) = ui.allocate_exact_size(vec2(widths[i], 24.0), sense);
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, crumb.depth.is_some(), &crumb.label));
+            let hovered = crumb.depth.is_some() && resp.hovered();
+            let color = if crumb.current || hovered {
+                ui.visuals().strong_text_color()
+            } else if crumb.depth.is_some() {
+                pal.btn_text.gamma_multiply(0.72)
+            } else {
+                pal.btn_disabled
+            };
+            if hovered {
+                ui.painter().rect_filled(rect, CornerRadius::same(6), pal.btn_hover);
+            }
+            ui.painter().text(rect.left_center() + vec2(PAD, 0.0), egui::Align2::LEFT_CENTER, &crumb.label, font.clone(), color);
+            if crumb.depth.is_some() {
+                let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+                if resp.clicked() {
+                    clicked = crumb.depth;
+                }
+            }
+        }
+    });
+    clicked
+}
+
+fn separator(ui: &mut Ui, pal: &Palette) {
+    let (rect, _) = ui.allocate_exact_size(vec2(14.0, 24.0), Sense::hover());
+    icons::paint(ui.painter(), Icon::ChevronRight, Rect::from_center_size(rect.center(), vec2(10.0, 10.0)), pal.btn_disabled);
+}
