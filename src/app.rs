@@ -578,12 +578,6 @@ impl App {
                         }
                     }
                 });
-
-                if let Some(scan) = &self.scan
-                    && ui.button(tr(lang, Key::Cancel)).clicked()
-                {
-                    scan.cancel.store(true, Ordering::Relaxed);
-                }
             });
         });
         if let Some((is_error, text)) = &self.message {
@@ -671,7 +665,20 @@ impl App {
         } else {
             (tr(lang, Key::StatusIdle).to_owned(), pal.ok)
         };
-        status_pill(ui, &pal, pos2(rect.right(), cy), &text, dot);
+        // While scanning, the Cancel button sits to the right of the progress pill.
+        let mut pill_right = rect.right();
+        if let Some(scan) = &self.scan {
+            let cancel = Btn::icon(Icon::Close, tr(lang, Key::Cancel)).with_text(tr(lang, Key::Cancel));
+            let layout = egui::Layout::right_to_left(egui::Align::Center);
+            let button = ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(layout), |ui| {
+                tool_button(ui, &pal, true, cancel)
+            });
+            if button.inner.clicked() {
+                scan.cancel.store(true, Ordering::Relaxed);
+            }
+            pill_right = button.inner.rect.left() - 8.0;
+        }
+        status_pill(ui, &pal, pos2(pill_right, cy), &text, dot);
     }
 
     fn header(&mut self, ui: &mut Ui) {

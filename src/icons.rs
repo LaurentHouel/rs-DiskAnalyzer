@@ -13,6 +13,7 @@ pub enum Icon {
     ChevronDown,
     Sun,
     Moon,
+    Close,
 }
 
 /// Maps the 24x24 design grid onto the target square.
@@ -92,6 +93,10 @@ pub fn paint(p: &Painter, icon: Icon, rect: Rect, color: Color32) {
 
     match icon {
         Icon::Back => line(vec![(15.0, 5.5), (8.5, 12.0), (15.0, 18.5)], false),
+        Icon::Close => {
+            line(vec![(6.0, 6.0), (18.0, 18.0)], false);
+            line(vec![(18.0, 6.0), (6.0, 18.0)], false);
+        }
         Icon::ChevronDown => line(vec![(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)], false),
         Icon::Home => {
             line(rounded(&[(3.0, 11.0), (12.0, 3.0), (21.0, 11.0)], 1.0, false), false);
