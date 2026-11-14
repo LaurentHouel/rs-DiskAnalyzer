@@ -127,41 +127,45 @@ fn extension_color(name: &str) -> Color32 {
     match ext.as_str() {
         "zip" | "7z" | "rar" | "tar" | "gz" | "xz" | "bz2" | "zst" | "iso" | "img" | "dmg"
         | "vmdk" | "vdi" | "qcow2" | "nup" | "pkg" | "deb" | "rpm" | "msi" => {
-            Color32::from_rgb(214, 40, 34)
+            Color32::from_rgb(205, 103, 96)
         }
         "mp4" | "mkv" | "avi" | "mov" | "webm" | "wmv" | "flv" | "m4v" => {
-            Color32::from_rgb(230, 126, 34)
+            Color32::from_rgb(205, 133, 82)
         }
-        "mp3" | "flac" | "wav" | "ogg" | "m4a" | "aac" | "opus" => Color32::from_rgb(150, 60, 150),
+        "mp3" | "flac" | "wav" | "ogg" | "m4a" | "aac" | "opus" => {
+            Color32::from_rgb(145, 111, 166)
+        }
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "heic" | "bmp" | "tif" | "tiff" | "svg"
-        | "raw" | "psd" => Color32::from_rgb(52, 160, 90),
+        | "raw" | "psd" => Color32::from_rgb(76, 151, 111),
         "pdf" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "txt" | "md" | "odt" | "csv" => {
-            Color32::from_rgb(64, 104, 190)
+            Color32::from_rgb(86, 126, 190)
         }
         "rs" | "c" | "h" | "cpp" | "py" | "js" | "ts" | "java" | "go" | "json" | "toml" | "html"
         | "css" | "o" | "a" | "so" | "dll" | "dylib" | "exe" | "class" | "jar" => {
-            Color32::from_rgb(36, 150, 160)
+            Color32::from_rgb(67, 145, 154)
         }
-        _ => Color32::from_rgb(150, 150, 160),
+        _ => Color32::from_rgb(133, 143, 157),
     }
 }
 
 fn lighten(c: Color32) -> Color32 {
-    let up = |v: u8| v.saturating_add(40);
+    let up = |v: u8| v.saturating_add(28);
     Color32::from_rgb(up(c.r()), up(c.g()), up(c.b()))
 }
 
 fn dir_color(depth: usize) -> Color32 {
     if depth % 2 == 0 {
-        Color32::from_rgb(52, 84, 160)
+        Color32::from_rgb(69, 103, 166)
     } else {
-        Color32::from_rgb(40, 56, 96)
+        Color32::from_rgb(49, 69, 111)
     }
 }
 
 pub fn show(ui: &mut Ui, cx: &ChartCtx) -> Option<ChartAction> {
     let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click());
     let bg = ui.visuals().extreme_bg_color;
+    // Thin gaps between cells: the page color on dark themes, white on light ones.
+    let stroke = if ui.visuals().dark_mode { bg } else { Color32::from_white_alpha(85) };
     painter.rect_filled(resp.rect, CornerRadius::ZERO, bg);
 
     let view = cx.root.get(cx.base)?;
@@ -189,11 +193,11 @@ pub fn show(ui: &mut Ui, cx: &ChartCtx) -> Option<ChartAction> {
         } else {
             fill
         };
-        painter.rect_filled(cell.rect, CornerRadius::ZERO, fill);
+        painter.rect_filled(cell.rect, CornerRadius::same(3), fill);
         painter.rect_stroke(
             cell.rect,
-            CornerRadius::ZERO,
-            Stroke::new(1.0, Color32::from_black_alpha(90)),
+            CornerRadius::same(3),
+            Stroke::new(1.0, stroke),
             StrokeKind::Inside,
         );
 

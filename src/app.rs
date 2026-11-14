@@ -1,9 +1,11 @@
 use crate::chart::{ChartAction, ChartCtx};
 use crate::drives::{self, Drive};
+use crate::icons::Icon;
 use crate::scan::{self, Node, ScanHandle};
-use crate::i18n::{Key, Lang, format_age, format_items, format_size, tr, trf};
+use crate::i18n::{Key, Lang, format_age, format_duration, format_items, format_size, tr, trf};
 use crate::util::reveal_in_file_manager;
-use crate::{rings, treemap};
+use crate::widgets::{Btn, divider, status_pill, tool_button};
+use crate::{rings, theme, treemap};
 use egui::{
     Align2, CentralPanel, Color32, CornerRadius, FontId, Panel, Rect, ScrollArea, Sense, Shape,
     Stroke, StrokeKind, Ui, pos2, vec2,
@@ -16,7 +18,7 @@ const MAX_RECENT: usize = 5;
 const CARD_W: f32 = 250.0;
 const CARD_H: f32 = 84.0;
 const CARD_GAP: f32 = 10.0;
-const ROW_H: f32 = 24.0;
+const ROW_H: f32 = 26.0;
 const INDENT: f32 = 16.0;
 const BAR_W: f32 = 56.0;
 const DEFAULT_COLS: [f32; 3] = [100.0, 150.0, 100.0];
@@ -61,6 +63,8 @@ pub struct App {
     selected: Option<Vec<usize>>,
     expanded: HashSet<Vec<usize>>,
     scan: Option<ScanHandle>,
+    /// How long the last completed scan took.
+    scan_time: Option<std::time::Duration>,
     chart: ChartKind,
     scroll_to_selected: bool,
     lang: Lang,
@@ -73,6 +77,8 @@ pub struct App {
     drives: Vec<Drive>,
     /// Widths of the Size, Contents and Modified columns.
     col_widths: [f32; 3],
+    dark: bool,
+    logo: Option<egui::TextureHandle>,
 }
 
 impl App {
@@ -88,6 +94,8 @@ impl App {
             .map(|r| r.lines().map(PathBuf::from).collect())
             .unwrap_or_default();
         let mut app = Self::empty(lang, recent);
+        app.dark = cc.storage.and_then(|s| s.get_string("dark")).is_none_or(|d| d == "1");
+        theme::apply(&cc.egui_ctx, app.dark);
         if let Some(w) = cc.storage.and_then(|s| s.get_string("cols")).and_then(|c| parse_widths(&c)) {
             app.col_widths = w;
         }
@@ -105,6 +113,7 @@ impl App {
             selected: None,
             expanded: HashSet::new(),
             scan: None,
+            scan_time: None,
             chart: ChartKind::Treemap,
             scroll_to_selected: false,
             lang,
@@ -115,6 +124,8 @@ impl App {
             recent,
             drives: drives::list(),
             col_widths: DEFAULT_COLS,
+            dark: true,
+            logo: None,
         }
     }
 
@@ -135,6 +146,7 @@ impl App {
             scan.cancel.store(true, Ordering::Relaxed);
         }
         self.root = None;
+        self.scan_time = None;
         self.root_path = PathBuf::new();
         self.view.clear();
         self.selected = None;
@@ -152,6 +164,7 @@ impl App {
             self.view.clear();
             self.selected = None;
             self.expanded.clear();
+            self.scan_time = Some(scan.started.elapsed());
             self.scan = None;
         }
     }
@@ -269,35 +282,76 @@ impl App {
     /// Start page: nothing is scanned until the user picks a folder.
     fn welcome_screen(&mut self, ui: &mut Ui) {
         let lang = self.lang;
+        let pal = theme::Palette::new(ui.visuals().dark_mode);
         let mut chosen = None;
         ui.vertical_centered(|ui| {
-            ui.add_space((ui.available_height() / 8.0).min(60.0));
-            ui.heading(tr(lang, Key::WelcomeTitle));
-            ui.add_space(6.0);
-            ui.label(tr(lang, Key::WelcomeHint));
-            ui.add_space(18.0);
-
-            ui.horizontal(|ui| {
-                ui.add_space((ui.available_width() - 360.0).max(0.0) / 2.0);
-                if ui.button(format!("🏠 {}", tr(lang, Key::HomeTip))).clicked() {
-                    chosen = dirs::home_dir();
-                }
-                if ui.button(format!("📂 {}", tr(lang, Key::Open))).clicked() {
-                    chosen = rfd::FileDialog::new().pick_folder();
-                }
-            });
+            ui.set_max_width(920.0);
+            ui.add_space((ui.available_height() * 0.06).min(36.0));
+            let logo = self.logo_texture(ui.ctx());
+            egui::Frame::new()
+                .fill(pal.hero_fill)
+                .stroke(Stroke::new(1.0, pal.hero_stroke))
+                .corner_radius(CornerRadius::same(18))
+                .inner_margin(egui::Margin::same(26))
+                .show(ui, |ui| {
+                    let width = (ui.available_width() - 52.0).clamp(560.0, 820.0);
+                    ui.set_width(width);
+                    ui.set_min_height(132.0);
+                    let right = ui.max_rect().left() + width;
+                    let left = ui.vertical(|ui| {
+                        ui.heading(
+                            egui::RichText::new(tr(lang, Key::WelcomeTitle))
+                                .size(28.0)
+                                .strong()
+                                .color(pal.hero_title),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new(tr(lang, Key::WelcomeHint))
+                                .size(15.0)
+                                .color(pal.hero_text),
+                        );
+                        ui.add_space(18.0);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            let open = Btn::icon(Icon::Folder, tr(lang, Key::OpenTip))
+                                .with_text(tr(lang, Key::Open))
+                                .icon_color(pal.accent);
+                            if tool_button(ui, &pal, true, open).clicked() {
+                                chosen = rfd::FileDialog::new().pick_folder();
+                            }
+                            let home = Btn::icon(Icon::Home, tr(lang, Key::HomeTip))
+                                .with_text(tr(lang, Key::HomeTip));
+                            if tool_button(ui, &pal, true, home).clicked() {
+                                chosen = dirs::home_dir();
+                            }
+                        });
+                    });
+                    let size = 128.0;
+                    let center = pos2(right - size / 2.0, left.response.rect.center().y);
+                    ui.painter().image(
+                        logo,
+                        Rect::from_center_size(center, vec2(size, size)),
+                        Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
+                });
 
             if !self.drives.is_empty() {
-                ui.add_space(20.0);
+                ui.add_space(24.0);
                 ui.horizontal(|ui| {
-                    ui.add_space((ui.available_width() - 120.0).max(0.0) / 2.0);
-                    ui.label(egui::RichText::new(tr(lang, Key::Drives)).strong());
-                    if ui.small_button("⟳").on_hover_text(tr(lang, Key::RescanTip)).clicked() {
+                    ui.label(egui::RichText::new(tr(lang, Key::Drives)).size(17.0).strong());
+                    let tip = tr(lang, Key::RescanTip);
+                    if tool_button(ui, &pal, true, Btn::icon(Icon::Refresh, tip))
+                        .on_hover_text(tip)
+                        .clicked()
+                    {
                         self.drives = drives::list();
                     }
                 });
                 ui.add_space(6.0);
-                let per_row = (((ui.available_width() + CARD_GAP) / (CARD_W + CARD_GAP)) as usize).clamp(1, 4);
+                let per_row =
+                    (((ui.available_width() + CARD_GAP) / (CARD_W + CARD_GAP)) as usize).clamp(1, 4);
                 for row in self.drives.chunks(per_row) {
                     let used = row.len() as f32 * (CARD_W + CARD_GAP) - CARD_GAP;
                     ui.horizontal(|ui| {
@@ -313,10 +367,19 @@ impl App {
             }
 
             if !self.recent.is_empty() {
-                ui.add_space(20.0);
-                ui.label(egui::RichText::new(tr(lang, Key::Recent)).strong());
+                ui.add_space(24.0);
+                ui.label(egui::RichText::new(tr(lang, Key::Recent)).size(17.0).strong());
                 for path in &self.recent {
-                    if ui.link(path.display().to_string()).clicked() {
+                    let label = path.display().to_string();
+                    let recent = egui::Button::new(label.clone())
+                        .fill(pal.btn_fill)
+                        .stroke(Stroke::new(1.0, pal.btn_border))
+                        .corner_radius(CornerRadius::same(9));
+                    if ui
+                        .add_sized(vec2(ui.available_width(), 36.0), recent)
+                        .on_hover_text(&label)
+                        .clicked()
+                    {
                         chosen = Some(path.clone());
                     }
                 }
@@ -337,69 +400,82 @@ impl App {
     fn toolbar(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         let lang = self.lang;
+        let pal = theme::Palette::new(ui.visuals().dark_mode);
         ui.horizontal(|ui| {
-            ui.add_space(4.0);
-            if ui
-                .add_enabled(!self.view.is_empty(), egui::Button::new("⬅"))
-                .on_hover_text(tr(lang, Key::ParentTip))
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let tip = tr(lang, Key::ParentTip);
+            if tool_button(ui, &pal, !self.view.is_empty(), Btn::icon(Icon::Back, tip))
+                .on_hover_text(tip)
                 .clicked()
             {
                 self.go_up();
             }
-            if ui.button("🏠").on_hover_text(tr(lang, Key::StartScreenTip)).clicked() {
+            let tip = tr(lang, Key::StartScreenTip);
+            if tool_button(ui, &pal, true, Btn::icon(Icon::Home, tip)).on_hover_text(tip).clicked() {
                 self.go_to_start_screen();
             }
-            if ui
-                .button(format!("📂 {}", tr(lang, Key::Open)))
-                .on_hover_text(tr(lang, Key::OpenTip))
-                .clicked()
+            let open = Btn::icon(Icon::Folder, tr(lang, Key::OpenTip))
+                .with_text(tr(lang, Key::Open))
+                .icon_color(pal.accent);
+            if tool_button(ui, &pal, true, open).on_hover_text(tr(lang, Key::OpenTip)).clicked()
                 && let Some(dir) = rfd::FileDialog::new().pick_folder()
             {
                 self.start_scan(&ctx, dir);
             }
             let rescan_path = self.scan.as_ref().map_or(self.root_path.clone(), |s| s.path.clone());
-            if ui
-                .add_enabled(!rescan_path.as_os_str().is_empty(), egui::Button::new("⟳"))
-                .on_hover_text(tr(lang, Key::RescanTip))
+            let tip = tr(lang, Key::RescanTip);
+            if tool_button(ui, &pal, !rescan_path.as_os_str().is_empty(), Btn::icon(Icon::Refresh, tip))
+                .on_hover_text(tip)
                 .clicked()
             {
                 self.start_scan(&ctx, rescan_path);
             }
+            divider(ui, &pal);
             let can_trash = self.root.is_some() && self.selected.is_some();
-            if ui
-                .add_enabled(can_trash, egui::Button::new(format!("🗑 {}", tr(lang, Key::MoveToTrash))))
+            let trash = Btn::icon(Icon::Trash, tr(lang, Key::TrashTip)).with_text(tr(lang, Key::MoveToTrash));
+            if tool_button(ui, &pal, can_trash, trash)
                 .on_hover_text(tr(lang, Key::TrashTip))
                 .clicked()
             {
                 self.pending_trash = self.selected.clone();
             }
-            ui.separator();
-            ui.label(self.display_path());
+
+            // Keep room for the right-hand group (language, theme, cancel).
+            let path = self.display_path();
+            if !path.is_empty() {
+                ui.scope(|ui| {
+                    ui.set_max_width((ui.available_width() - 330.0).max(0.0));
+                    ui.add(egui::Label::new(egui::RichText::new(path).weak()).truncate());
+                });
+            }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                egui::ComboBox::from_id_salt("lang")
-                    .selected_text(self.lang.native_name())
-                    .show_ui(ui, |ui| {
-                        for l in Lang::ALL {
-                            ui.selectable_value(&mut self.lang, l, l.native_name());
+                let (icon, tip) = (if self.dark { Icon::Sun } else { Icon::Moon }, tr(lang, Key::ThemeTip));
+                if tool_button(ui, &pal, true, Btn::icon(icon, tip).icon_color(pal.theme_icon))
+                    .on_hover_text(tip)
+                    .clicked()
+                {
+                    self.dark = !self.dark;
+                    theme::apply(&ctx, self.dark);
+                }
+
+                let language = Btn::icon(Icon::Globe, tr(lang, Key::Language))
+                    .with_text(self.lang.native_name())
+                    .trailing(Icon::ChevronDown);
+                let button = tool_button(ui, &pal, true, language);
+                egui::Popup::menu(&button).align(egui::RectAlign::BOTTOM_END).gap(6.0).show(|ui| {
+                    ui.set_min_width(150.0);
+                    for l in Lang::ALL {
+                        if ui.selectable_label(self.lang == l, l.native_name()).clicked() {
+                            self.lang = l;
                         }
-                    })
-                    .response
-                    .on_hover_text(tr(lang, Key::Language));
-                if let Some(scan) = &self.scan {
-                    if ui.button(tr(lang, Key::Cancel)).clicked() {
-                        scan.cancel.store(true, Ordering::Relaxed);
                     }
-                    ui.spinner();
-                    let p = &scan.progress;
-                    ui.label(trf(
-                        lang,
-                        Key::ScanProgress,
-                        &[
-                            &p.files.load(Ordering::Relaxed).to_string(),
-                            &format_size(lang, p.bytes.load(Ordering::Relaxed)),
-                        ],
-                    ));
+                });
+
+                if let Some(scan) = &self.scan
+                    && ui.button(tr(lang, Key::Cancel)).clicked()
+                {
+                    scan.cancel.store(true, Ordering::Relaxed);
                 }
             });
         });
@@ -416,8 +492,82 @@ impl App {
         }
     }
 
+    fn logo_texture(&mut self, ctx: &egui::Context) -> egui::TextureId {
+        self.logo
+            .get_or_insert_with(|| {
+                let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png"))
+                    .expect("embedded icon is a valid PNG");
+                let image = egui::ColorImage::from_rgba_unmultiplied(
+                    [icon.width as usize, icon.height as usize],
+                    &icon.rgba,
+                );
+                ctx.load_texture("logo", image, egui::TextureOptions::LINEAR)
+            })
+            .id()
+    }
+
+    /// Title row: app logo and name on the left, scan status on the right. On macOS it replaces the
+    /// native title bar, so it also drags and zooms the window.
+    fn title_row(&mut self, ui: &mut Ui) {
+        let lang = self.lang;
+        let pal = theme::Palette::new(ui.visuals().dark_mode);
+        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click_and_drag());
+        if resp.drag_started_by(egui::PointerButton::Primary) {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if resp.double_clicked() {
+            let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        }
+
+        let logo_id = self.logo_texture(ui.ctx());
+
+        let cy = rect.center().y;
+        let mut x = rect.left();
+        if cfg!(target_os = "macos") {
+            // Room for the native window buttons.
+            ui.painter().vline(rect.left() + 62.0, (cy - 8.0)..=(cy + 8.0), Stroke::new(1.0, pal.btn_border));
+            x += 76.0;
+        }
+        let logo_rect = Rect::from_center_size(pos2(x + 14.0, cy), vec2(32.0, 32.0));
+        ui.painter().image(
+            logo_id,
+            logo_rect,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        ui.painter().text(
+            pos2(logo_rect.right() + 4.0, cy),
+            Align2::LEFT_CENTER,
+            "Disk Analyzer",
+            FontId::proportional(15.0),
+            ui.visuals().strong_text_color(),
+        );
+
+        let (text, dot) = if let Some(scan) = &self.scan {
+            let p = &scan.progress;
+            (
+                trf(
+                    lang,
+                    Key::StatusScanning,
+                    &[
+                        &p.files.load(Ordering::Relaxed).to_string(),
+                        &format_size(lang, p.bytes.load(Ordering::Relaxed)),
+                    ],
+                ),
+                pal.warn,
+            )
+        } else if let Some(root) = &self.root {
+            let time = self.scan_time.map(|d| format_duration(lang, d)).unwrap_or_default();
+            (trf(lang, Key::StatusDone, &[&format_size(lang, root.size), &time]), pal.ok)
+        } else {
+            (tr(lang, Key::StatusIdle).to_owned(), pal.ok)
+        };
+        status_pill(ui, &pal, pos2(rect.right(), cy), &text, dot);
+    }
+
     fn header(&mut self, ui: &mut Ui) {
-        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
         let cols = Columns::new(rect, self.col_widths);
         let spans = [
             (SortKey::Name, Key::Folder, rect.left(), cols.name_right, cols.name_right),
@@ -509,6 +659,7 @@ impl App {
 
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
         let cols = Columns::new(rect, self.col_widths);
+        let accent = theme::Palette::new(ui.visuals().dark_mode).accent;
         let p = ui.painter();
         let y = rect.center().y;
         let strong = ui.visuals().strong_text_color();
@@ -517,7 +668,7 @@ impl App {
             Align2::LEFT_CENTER,
             &view.name,
             FontId::proportional(14.0),
-            Color32::from_rgb(190, 140, 40),
+            accent,
         );
         let normal = ui.visuals().text_color();
         let f = FontId::proportional(13.0);
@@ -627,6 +778,7 @@ impl eframe::App for App {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string("lang", self.lang.code().to_owned());
+        storage.set_string("dark", if self.dark { "1" } else { "0" }.to_owned());
         let recent: Vec<String> = self.recent.iter().map(|p| p.display().to_string()).collect();
         storage.set_string("recent", recent.join("\n"));
         let cols: Vec<String> = self.col_widths.iter().map(|w| w.to_string()).collect();
@@ -654,10 +806,13 @@ impl App {
             self.pending_trash = self.selected.clone();
         }
 
-        Panel::top("toolbar").show(ui, |ui| {
-            ui.add_space(4.0);
+        let toolbar_frame = egui::Frame::new()
+            .fill(ui.visuals().panel_fill)
+            .inner_margin(egui::Margin::symmetric(14, 0));
+        Panel::top("toolbar").frame(toolbar_frame).show(ui, |ui| {
+            self.title_row(ui);
             self.toolbar(ui);
-            ui.add_space(4.0);
+            ui.add_space(12.0);
         });
 
         if self.root.is_none() {
@@ -777,14 +932,15 @@ fn draw_row(
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
     let cols = Columns::new(rect, widths);
     let visuals = ui.visuals().clone();
+    let pal = theme::Palette::new(visuals.dark_mode);
     let node = row.node;
     let is_selected = selected == Some(&row.path);
 
     let p = ui.painter();
     if is_selected {
-        p.rect_filled(rect, CornerRadius::ZERO, visuals.selection.bg_fill);
+        p.rect_filled(rect, CornerRadius::same(5), visuals.selection.bg_fill);
     } else if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::ZERO, visuals.widgets.hovered.weak_bg_fill);
+        p.rect_filled(rect, CornerRadius::same(5), visuals.widgets.hovered.weak_bg_fill);
     }
 
     let x0 = rect.left() + 6.0 + row.depth as f32 * INDENT;
@@ -807,9 +963,9 @@ fn draw_row(
         0.0
     };
     let bar = Rect::from_min_size(pos2(x0 + 16.0, rect.top() + 4.0), vec2(BAR_W, ROW_H - 8.0));
-    p.rect_filled(bar, 3.0, visuals.faint_bg_color.gamma_multiply(2.0));
+    p.rect_filled(bar, 3.0, pal.track);
     let fill = Rect::from_min_size(bar.min, vec2(bar.width() * (pct / 100.0) as f32, bar.height()));
-    p.rect_filled(fill, 3.0, Color32::from_rgb(52, 120, 220));
+    p.rect_filled(fill, 3.0, pal.accent.gamma_multiply(if visuals.dark_mode { 0.6 } else { 1.0 }));
     p.rect_stroke(bar, 3.0, Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color), StrokeKind::Inside);
     p.text(
         pos2(bar.right() - 3.0, y),
@@ -872,10 +1028,11 @@ fn draw_row(
 fn drive_card(ui: &mut Ui, lang: Lang, drive: &Drive) -> bool {
     let (rect, resp) = ui.allocate_exact_size(vec2(CARD_W, CARD_H), Sense::click());
     let visuals = ui.visuals();
+    let pal = theme::Palette::new(visuals.dark_mode);
     let fill = if resp.hovered() {
         visuals.widgets.hovered.weak_bg_fill
     } else {
-        visuals.widgets.inactive.weak_bg_fill
+        pal.card
     };
     let border = if resp.hovered() {
         visuals.selection.stroke.color
@@ -890,18 +1047,18 @@ fn drive_card(ui: &mut Ui, lang: Lang, drive: &Drive) -> bool {
         0.0
     };
     let usage_color = match ratio {
-        r if r >= 0.9 => Color32::from_rgb(214, 60, 50),
-        r if r >= 0.75 => Color32::from_rgb(230, 150, 40),
-        _ => Color32::from_rgb(52, 120, 220),
+        r if r >= 0.9 => Color32::from_rgb(232, 84, 74),
+        r if r >= 0.75 => Color32::from_rgb(235, 160, 55),
+        _ => pal.accent,
     };
 
     let p = ui.painter();
-    p.rect(rect, 8.0, fill, Stroke::new(1.0, border), StrokeKind::Inside);
+    p.rect(rect, 12.0, fill, Stroke::new(1.0, border), StrokeKind::Inside);
     drives::paint_icon(
         p,
         Rect::from_min_size(rect.min + vec2(12.0, 16.0), vec2(56.0, 52.0)),
         drive.kind,
-        Color32::from_rgb(90, 220, 120),
+        pal.drive_icon,
     );
 
     let x = rect.left() + 82.0;
@@ -914,7 +1071,7 @@ fn drive_card(ui: &mut Ui, lang: Lang, drive: &Drive) -> bool {
         strong,
     );
     let bar = Rect::from_min_size(pos2(x, rect.top() + 34.0), vec2(text_w, 10.0));
-    p.rect_filled(bar, 5.0, Color32::from_black_alpha(70));
+    p.rect_filled(bar, 5.0, pal.track);
     p.rect_filled(
         Rect::from_min_size(bar.min, vec2((bar.width() * ratio).max(if ratio > 0.0 { 5.0 } else { 0.0 }), bar.height())),
         5.0,
@@ -973,7 +1130,7 @@ mod tests {
         harness.run();
         assert!(harness.query_by_label("Choose what to scan. Nothing is scanned until you ask.").is_none());
 
-        harness.get_by_label("🏠").click();
+        harness.get_by_label("Back to the selection screen").click();
         harness.run();
 
         assert!(harness.state().root.is_none());
@@ -1073,7 +1230,8 @@ mod tests {
         // Probe the header row for a resize handle: press, move left by 30px, release.
         let before = harness.state().col_widths;
         let mut found = false;
-        'probe: for y in [40.0, 46.0, 52.0, 58.0, 64.0, 70.0] {
+        'probe: for y in (90..140).step_by(6) {
+            let y = y as f32;
             for x in (250..520).step_by(2) {
                 let x = x as f32;
                 harness.hover_at(egui::pos2(x, y));
@@ -1094,6 +1252,8 @@ mod tests {
         let after = harness.state().col_widths;
         assert!(after.iter().zip(before).any(|(a, b)| a > &b));
     }
+
+
 
     #[test]
     fn stored_column_widths_are_validated() {

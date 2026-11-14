@@ -4,10 +4,13 @@ mod app;
 mod chart;
 mod drives;
 mod i18n;
+mod icons;
 mod rings;
 mod scan;
+mod theme;
 mod treemap;
 mod util;
+mod widgets;
 
 /// Some Windows Vulkan drivers (e.g. old Intel ones) crash while the device is created, so
 /// Direct3D 12 is used unless the user picked a backend through `WGPU_BACKEND`.
@@ -34,11 +37,23 @@ fn main() -> eframe::Result {
             start = args.next().map(std::path::PathBuf::from);
         }
     }
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1200.0, 720.0])
+        .with_min_inner_size([800.0, 400.0])
+        .with_title("Disk Analyzer");
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon-256.png")) {
+        viewport = viewport.with_icon(icon);
+    }
+    // macOS: the native window buttons float over our own title row.
+    #[cfg(target_os = "macos")]
+    {
+        viewport = viewport
+            .with_fullsize_content_view(true)
+            .with_title_shown(false)
+            .with_titlebar_shown(false);
+    }
     let mut options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 720.0])
-            .with_min_inner_size([800.0, 400.0])
-            .with_title("Disk Analyzer"),
+        viewport,
         ..Default::default()
     };
     prefer_dx12_on_windows(&mut options);

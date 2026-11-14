@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Lang {
@@ -57,7 +57,6 @@ pub enum Key {
     OpenTip,
     RescanTip,
     Cancel,
-    ScanProgress,
     ScanningPath,
     ScanDetails,
     WelcomeTitle,
@@ -76,6 +75,10 @@ pub enum Key {
     TrashFailed,
     Trashed,
     Language,
+    StatusIdle,
+    StatusScanning,
+    StatusDone,
+    ThemeTip,
     Bytes,
     Today,
     Yesterday,
@@ -124,12 +127,6 @@ pub fn tr(lang: Lang, key: Key) -> &'static str {
         ],
         RescanTip => ["Rescan", "Analyser à nouveau", "Volver a analizar", "Erneut analysieren"],
         Cancel => ["Cancel", "Annuler", "Cancelar", "Abbrechen"],
-        ScanProgress => [
-            "{0} files · {1}",
-            "{0} fichiers · {1}",
-            "{0} archivos · {1}",
-            "{0} Dateien · {1}",
-        ],
         ScanningPath => ["Scanning {0}…", "Analyse de {0}…", "Analizando {0}…", "Analysiere {0}…"],
         ScanDetails => [
             "{0} folders · {1} files · {2} · {3}s",
@@ -198,6 +195,30 @@ pub fn tr(lang: Lang, key: Key) -> &'static str {
             "„{0}“ in den Papierkorb verschoben",
         ],
         Language => ["Language", "Langue", "Idioma", "Sprache"],
+        StatusIdle => [
+            "Idle — Ready to scan",
+            "Inactif — Prêt à analyser",
+            "Inactivo — Listo para analizar",
+            "Leerlauf — Bereit zum Analysieren",
+        ],
+        StatusScanning => [
+            "Scanning — {0} files · {1}",
+            "Analyse — {0} fichiers · {1}",
+            "Analizando — {0} archivos · {1}",
+            "Analyse — {0} Dateien · {1}",
+        ],
+        StatusDone => [
+            "Scan complete — {0} · {1}",
+            "Analyse terminée — {0} · {1}",
+            "Análisis completo — {0} · {1}",
+            "Analyse abgeschlossen — {0} · {1}",
+        ],
+        ThemeTip => [
+            "Switch between light and dark theme",
+            "Basculer entre thème clair et sombre",
+            "Cambiar entre tema claro y oscuro",
+            "Zwischen hellem und dunklem Design wechseln",
+        ],
         Bytes => ["bytes", "octets", "bytes", "Bytes"],
         Today => ["Today", "Aujourd’hui", "Hoy", "Heute"],
         Yesterday => ["Yesterday", "Hier", "Ayer", "Gestern"],
@@ -244,6 +265,21 @@ pub fn format_size(lang: Lang, bytes: u64) -> String {
     format!("{num} {}", units[unit - 1])
 }
 
+/// Compact scan duration: "0.8 s", "42 s", "3 min 07 s".
+pub fn format_duration(lang: Lang, d: Duration) -> String {
+    let secs = d.as_secs_f64();
+    if secs < 10.0 {
+        let num = format!("{secs:.1}");
+        let num = if lang.decimal_comma() { num.replace('.', ",") } else { num };
+        format!("{num} s")
+    } else if secs < 60.0 {
+        format!("{:.0} s", secs)
+    } else {
+        let total = secs.round() as u64;
+        format!("{} min {:02} s", total / 60, total % 60)
+    }
+}
+
 pub fn format_items(lang: Lang, n: u64) -> String {
     if n == 1 {
         tr(lang, Key::Item1).to_owned()
@@ -285,6 +321,14 @@ mod tests {
         assert_eq!(format_size(Lang::En, 999), "999 bytes");
         assert_eq!(format_size(Lang::En, 53_200_000_000), "53.2 GB");
         assert_eq!(format_size(Lang::Fr, 1_500_000), "1,5 Mo");
+    }
+
+    #[test]
+    fn durations_are_compact_and_localized() {
+        assert_eq!(format_duration(Lang::En, Duration::from_millis(840)), "0.8 s");
+        assert_eq!(format_duration(Lang::Fr, Duration::from_millis(2_450)), "2,5 s");
+        assert_eq!(format_duration(Lang::En, Duration::from_secs(42)), "42 s");
+        assert_eq!(format_duration(Lang::En, Duration::from_secs(187)), "3 min 07 s");
     }
 
     #[test]
