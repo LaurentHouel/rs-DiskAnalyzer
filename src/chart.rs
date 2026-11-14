@@ -1,12 +1,16 @@
 use crate::scan::Node;
 use crate::i18n::{Key, Lang, format_age, format_items, format_size, tr};
-use egui::{Color32, Ui};
+use egui::{Color32, Response, Ui};
 use std::path::Path;
 
 pub enum ChartAction {
     Select(Vec<usize>),
     Open(Vec<usize>),
     Up,
+    Reveal(Vec<usize>),
+    Trash(Vec<usize>),
+    Delete(Vec<usize>),
+    Info(Vec<usize>),
 }
 
 pub struct ChartCtx<'a> {
@@ -47,4 +51,46 @@ pub fn text_color_on(bg: Color32) -> Color32 {
     } else {
         Color32::WHITE
     }
+}
+
+/// Right-click menu for the chart item under the pointer when the click happened.
+/// The target is remembered so the menu keeps working while the pointer moves over it.
+pub fn item_menu(
+    ui: &Ui,
+    resp: &Response,
+    cx: &ChartCtx,
+    hovered: Option<&[usize]>,
+) -> Option<ChartAction> {
+    let id = resp.id.with("menu_target");
+    if resp.secondary_clicked() {
+        ui.ctx().data_mut(|d| d.insert_temp(id, hovered.map(<[usize]>::to_vec)));
+    }
+    let target = ui.ctx().data(|d| d.get_temp::<Option<Vec<usize>>>(id)).flatten()?;
+    let node = cx.root.get(&target)?;
+
+    let mut action = None;
+    resp.context_menu(|ui| {
+        ui.label(egui::RichText::new(&node.name).strong());
+        ui.separator();
+        if ui.button(tr(cx.lang, Key::ShowInFileManager)).clicked() {
+            action = Some(ChartAction::Reveal(target.clone()));
+            ui.close();
+        }
+        if ui.button(tr(cx.lang, Key::MoreInfo)).clicked() {
+            action = Some(ChartAction::Info(target.clone()));
+            ui.close();
+        }
+        ui.separator();
+        if ui.button(tr(cx.lang, Key::MoveToTrash)).clicked() {
+            action = Some(ChartAction::Trash(target.clone()));
+            ui.close();
+        }
+        let delete = egui::RichText::new(tr(cx.lang, Key::DeletePermanently))
+            .color(Color32::from_rgb(232, 84, 74));
+        if ui.button(delete).clicked() {
+            action = Some(ChartAction::Delete(target.clone()));
+            ui.close();
+        }
+    });
+    action
 }

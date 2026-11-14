@@ -1,4 +1,4 @@
-use crate::chart::{ChartAction, ChartCtx, text_color_on, tooltip};
+use crate::chart::{ChartAction, ChartCtx, item_menu, text_color_on, tooltip};
 use crate::scan::Node;
 use crate::i18n::format_size;
 use egui::ecolor::Hsva;
@@ -180,6 +180,14 @@ pub fn show(ui: &mut Ui, cx: &ChartCtx) -> Option<ChartAction> {
         resp.clone().on_hover_ui_at_pointer(|ui| tooltip(ui, cx, path));
     }
 
+    if let Some(action) = item_menu(ui, &resp, cx, hovered_path.as_deref()) {
+        return Some(action);
+    }
+    if resp.secondary_clicked()
+        && let Some(path) = &hovered_path
+    {
+        return Some(ChartAction::Select(path.clone()));
+    }
     if resp.secondary_clicked() || (resp.clicked() && over_center) {
         return Some(ChartAction::Up);
     }

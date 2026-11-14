@@ -3,7 +3,7 @@ use crate::drives::{self, Drive};
 use crate::icons::Icon;
 use crate::scan::{self, Node, ScanHandle};
 use crate::i18n::{Key, Lang, format_age, format_duration, format_items, format_size, tr, trf};
-use crate::util::reveal_in_file_manager;
+use crate::util::{delete_permanently, reveal_in_file_manager};
 use crate::widgets::{Btn, divider, status_pill, tool_button};
 use crate::{rings, theme, treemap};
 use egui::{
@@ -46,6 +46,8 @@ enum ListAction {
     Open(Vec<usize>),
     Reveal(Vec<usize>),
     CopyPath(Vec<usize>),
+    Delete(Vec<usize>),
+    Info(Vec<usize>),
 }
 
 struct Row<'a> {
@@ -71,6 +73,8 @@ pub struct App {
     sort_key: SortKey,
     sort_desc: bool,
     pending_trash: Option<Vec<usize>>,
+    pending_delete: Option<Vec<usize>>,
+    info: Option<Vec<usize>>,
     /// Last status message; the flag is true for errors.
     message: Option<(bool, String)>,
     recent: Vec<PathBuf>,
@@ -120,6 +124,8 @@ impl App {
             sort_key: SortKey::Size,
             sort_desc: true,
             pending_trash: None,
+            pending_delete: None,
+            info: None,
             message: None,
             recent,
             drives: drives::list(),
@@ -152,6 +158,8 @@ impl App {
         self.selected = None;
         self.expanded.clear();
         self.pending_trash = None;
+        self.pending_delete = None;
+        self.info = None;
         self.message = None;
         self.drives = drives::list();
     }
@@ -193,23 +201,41 @@ impl App {
         }
     }
 
-    fn trash_dialog(&mut self, ctx: &egui::Context) {
-        let Some(path) = self.pending_trash.clone() else { return };
+    fn modal_open(&self) -> bool {
+        self.pending_trash.is_some() || self.pending_delete.is_some() || self.info.is_some()
+    }
+
+    /// Confirmation for moving to the trash, or for deleting permanently when `permanent`.
+    fn removal_dialog(&mut self, ctx: &egui::Context, permanent: bool) {
+        let pending = if permanent { &self.pending_delete } else { &self.pending_trash };
+        let Some(path) = pending.clone() else { return };
         let Some(node) = self.root.as_ref().and_then(|r| r.get(&path)) else {
             self.pending_trash = None;
+            self.pending_delete = None;
             return;
         };
         let lang = self.lang;
-        let text = trf(lang, Key::ConfirmTrash, &[&node.name, &format_size(lang, node.size)]);
+        let (title, confirm_key) = if permanent {
+            (tr(lang, Key::DeletePermanently), Key::ConfirmDelete)
+        } else {
+            (tr(lang, Key::MoveToTrash), Key::ConfirmTrash)
+        };
+        let text = trf(lang, confirm_key, &[&node.name, &format_size(lang, node.size)]);
         let mut confirmed = false;
-        let modal = egui::Modal::new(egui::Id::unique("trash_modal")).show(ctx, |ui| {
+        let id = egui::Id::unique(if permanent { "delete_modal" } else { "trash_modal" });
+        let modal = egui::Modal::new(id).show(ctx, |ui| {
             ui.set_max_width(420.0);
-            ui.heading(tr(lang, Key::MoveToTrash));
+            ui.heading(title);
             ui.add_space(6.0);
             ui.label(text);
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                if ui.button(tr(lang, Key::MoveToTrash)).clicked() {
+                let label = if permanent {
+                    egui::RichText::new(title).color(Color32::from_rgb(232, 84, 74))
+                } else {
+                    egui::RichText::new(title)
+                };
+                if ui.button(label).clicked() {
                     confirmed = true;
                 }
                 if ui.button(tr(lang, Key::Cancel)).clicked() {
@@ -219,18 +245,98 @@ impl App {
         });
         if confirmed {
             self.pending_trash = None;
-            self.trash(&path);
+            self.pending_delete = None;
+            self.remove(&path, permanent);
         } else if modal.should_close() {
             self.pending_trash = None;
+            self.pending_delete = None;
         }
     }
 
-    fn trash(&mut self, path: &[usize]) {
+    fn info_dialog(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.info.clone() else { return };
+        let Some(root) = &self.root else {
+            self.info = None;
+            return;
+        };
+        let Some(node) = root.get(&path) else {
+            self.info = None;
+            return;
+        };
+        let lang = self.lang;
+        let full_path = root.path_of(&self.root_path, &path);
+        let percent = |part: u64, whole: u64| {
+            let value = if whole == 0 { 0.0 } else { part as f64 * 100.0 / whole as f64 };
+            let text = format!("{value:.1} %");
+            if lang == Lang::En { text.replace(" %", "%") } else { text.replace('.', ",") }
+        };
+        let parent_size = path
+            .split_last()
+            .and_then(|(_, parent)| root.get(parent))
+            .map_or(node.size, |p| p.size);
+        let kind = if node.is_dir { tr(lang, Key::Folder) } else { tr(lang, Key::KindFile) };
+        let mut rows = vec![
+            (tr(lang, Key::InfoPath), full_path.display().to_string()),
+            (tr(lang, Key::InfoType), kind.to_owned()),
+            (tr(lang, Key::Size), {
+                let human = format_size(lang, node.size);
+                if node.size < 1000 {
+                    human
+                } else {
+                    format!("{human} ({} {})", node.size, tr(lang, Key::Bytes))
+                }
+            }),
+        ];
+        if node.is_dir {
+            rows.push((tr(lang, Key::Contents), format_items(lang, node.items)));
+        }
+        rows.push((tr(lang, Key::Modified), format_age(lang, node.modified)));
+        rows.push((tr(lang, Key::ShareOfParent), percent(node.size, parent_size)));
+        rows.push((tr(lang, Key::ShareOfScan), percent(node.size, root.size)));
+        let title = node.name.clone();
+
+        let mut reveal = false;
+        let modal = egui::Modal::new(egui::Id::unique("info_modal")).show(ctx, |ui| {
+            ui.set_max_width(460.0);
+            ui.heading(title);
+            ui.add_space(8.0);
+            egui::Grid::new("info_grid").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
+                for (label, value) in &rows {
+                    ui.label(egui::RichText::new(*label).weak());
+                    ui.add(egui::Label::new(value).wrap());
+                    ui.end_row();
+                }
+            });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button(tr(lang, Key::ShowInFileManager)).clicked() {
+                    reveal = true;
+                }
+                if ui.button(tr(lang, Key::Close)).clicked() {
+                    ui.close();
+                }
+            });
+        });
+        if reveal {
+            reveal_in_file_manager(&full_path);
+        }
+        if modal.should_close() {
+            self.info = None;
+        }
+    }
+
+    fn remove(&mut self, path: &[usize], permanent: bool) {
         let Some(root) = &mut self.root else { return };
         let target = root.path_of(&self.root_path, path);
         let name = root.get(path).map(|n| n.name.clone()).unwrap_or_default();
-        if let Err(e) = trash::delete(&target) {
-            self.message = Some((true, trf(self.lang, Key::TrashFailed, &[&e.to_string()])));
+        let result = if permanent {
+            delete_permanently(&target).map_err(|e| e.to_string())
+        } else {
+            trash::delete(&target).map_err(|e| e.to_string())
+        };
+        if let Err(e) = result {
+            let key = if permanent { Key::DeleteFailed } else { Key::TrashFailed };
+            self.message = Some((true, trf(self.lang, key, &[&e])));
             return;
         }
 
@@ -256,7 +362,8 @@ impl App {
             .iter()
             .filter_map(|e| root.resolve(root_path, e))
             .collect();
-        self.message = Some((false, trf(self.lang, Key::Trashed, &[&name])));
+        let key = if permanent { Key::Deleted } else { Key::Trashed };
+        self.message = Some((false, trf(self.lang, key, &[&name])));
     }
 
     fn scanning_screen(&self, ui: &mut Ui) {
@@ -559,7 +666,8 @@ impl App {
             )
         } else if let Some(root) = &self.root {
             let time = self.scan_time.map(|d| format_duration(lang, d)).unwrap_or_default();
-            (trf(lang, Key::StatusDone, &[&format_size(lang, root.size), &time]), pal.ok)
+            let text = trf(lang, Key::StatusDone, &[&format_size(lang, root.size), &time]);
+            (text.trim_end_matches([' ', '·']).to_owned(), pal.ok)
         } else {
             (tr(lang, Key::StatusIdle).to_owned(), pal.ok)
         };
@@ -725,6 +833,8 @@ impl App {
             }
             Some(ListAction::Open(p)) => self.open(p),
             Some(ListAction::Trash(p)) => self.pending_trash = Some(p),
+            Some(ListAction::Delete(p)) => self.pending_delete = Some(p),
+            Some(ListAction::Info(p)) => self.info = Some(p),
             Some(ListAction::Reveal(p)) => {
                 if let Some(root) = &self.root {
                     reveal_in_file_manager(&root.path_of(&root_path, &p));
@@ -766,6 +876,14 @@ impl App {
                 self.go_up();
                 ui.ctx().request_repaint();
             }
+            Some(ChartAction::Reveal(p)) => {
+                if let Some(root) = &self.root {
+                    reveal_in_file_manager(&root.path_of(&self.root_path, &p));
+                }
+            }
+            Some(ChartAction::Trash(p)) => self.pending_trash = Some(p),
+            Some(ChartAction::Delete(p)) => self.pending_delete = Some(p),
+            Some(ChartAction::Info(p)) => self.info = Some(p),
             None => {}
         }
     }
@@ -799,10 +917,10 @@ impl App {
                 i.key_pressed(egui::Key::Delete) || cmd_backspace,
             )
         });
-        if go_up && self.pending_trash.is_none() {
+        if go_up && !self.modal_open() {
             self.go_up();
         }
-        if delete && self.pending_trash.is_none() && self.root.is_some() {
+        if delete && !self.modal_open() && self.root.is_some() {
             self.pending_trash = self.selected.clone();
         }
 
@@ -852,7 +970,9 @@ impl App {
         });
 
         CentralPanel::default().show(ui, |ui| self.chart_panel(ui));
-        self.trash_dialog(ui.ctx());
+        self.removal_dialog(ui.ctx(), false);
+        self.removal_dialog(ui.ctx(), true);
+        self.info_dialog(ui.ctx());
     }
 }
 
@@ -1016,9 +1136,18 @@ fn draw_row(
             action = Some(ListAction::Open(row.path.clone()));
             ui.close();
         }
+        if ui.button(tr(lang, Key::MoreInfo)).clicked() {
+            action = Some(ListAction::Info(row.path.clone()));
+            ui.close();
+        }
         ui.separator();
         if ui.button(tr(lang, Key::MoveToTrash)).clicked() {
             action = Some(ListAction::Trash(row.path.clone()));
+            ui.close();
+        }
+        let delete = egui::RichText::new(tr(lang, Key::DeletePermanently)).color(Color32::from_rgb(232, 84, 74));
+        if ui.button(delete).clicked() {
+            action = Some(ListAction::Delete(row.path.clone()));
             ui.close();
         }
     });
@@ -1254,6 +1383,44 @@ mod tests {
     }
 
 
+
+    #[test]
+    fn right_click_on_a_chart_item_opens_its_menu() {
+        let mut app = App::empty(Lang::En, Vec::new());
+        app.root = Some(sample_root());
+        app.root_path = PathBuf::from("/data");
+        let mut harness = Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1100.0, 700.0))
+            .build_ui_state(|ui, app: &mut App| app.show(ui), app);
+        harness.run();
+
+        let point = egui::pos2(900.0, 400.0);
+        harness.hover_at(point);
+        harness.run();
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton {
+                pos: point,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+            harness.step();
+        }
+        harness.run();
+
+        for label in ["Show in file manager", "More information…", "Move to trash", "Delete permanently"] {
+            assert!(
+                harness.query_all_by_label(label).count() > 0,
+                "menu entry {label:?} is missing"
+            );
+        }
+        assert!(harness.state().selected.is_some(), "right click should select the item");
+
+        harness.get_by_label("More information…").click();
+        harness.run();
+        assert!(harness.state().info.is_some());
+    }
 
     #[test]
     fn stored_column_widths_are_validated() {
