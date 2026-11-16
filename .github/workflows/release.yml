@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
@@ -38,6 +38,19 @@ jobs:
           key: ${{ matrix.target }}
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Check Ubuntu 22.04 glibc compatibility
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          binary="target/${{ matrix.target }}/release/rs-disk-analyzer"
+          required=$(readelf --version-info "$binary" |
+            grep -oE 'GLIBC_[0-9.]+' |
+            sed 's/GLIBC_//' | sort -Vu | tail -n 1)
+          newest=$(printf '%s\n' "$required" 2.35 | sort -V | tail -n 1)
+          if [ "$newest" != "2.35" ]; then
+            echo "::error::Binary requires glibc $required; Ubuntu 22.04 provides 2.35"
+            exit 1
+          fi
       - name: Package
         shell: bash
         run: |

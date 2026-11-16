@@ -16,6 +16,21 @@ Pre-built packages for macOS (Apple Silicon / Intel), Windows and Linux (x86_64 
 - **Windows:** `rs-disk-analyzer.exe`, a GUI executable without console window.
 - **Linux:** the binary plus a `.desktop` entry (`Terminal=false`).
 
+Linux x86_64 packages are built on Ubuntu 22.04 (glibc 2.35); aarch64 packages
+are built on Ubuntu 24.04 (glibc 2.39). A graphical desktop session is required.
+The **v0.1.3 x86_64** package was built on Ubuntu 26.04 and requires glibc 2.43,
+so it cannot run on Ubuntu 22.04. The corrected build configuration applies to
+subsequent builds, not the existing v0.1.3 download.
+
+If double-clicking does nothing, open a terminal in the extracted directory and run:
+
+```sh
+./rs-disk-analyzer
+```
+
+This displays startup errors, including missing libraries or an incompatible
+glibc version. Do not manually replace the system glibc to run the application.
+
 ## Build
 
 ```sh
@@ -46,6 +61,8 @@ The app does not scan anything at startup; only the explicit option `--scan <fol
 ## Releasing
 
 Push a tag such as `v0.2.0`: the *Release* workflow builds every platform and publishes the archives.
+Keep the Linux x86_64 build pinned to Ubuntu 22.04 to preserve its glibc baseline.
+The workflow rejects x86_64 binaries requiring a glibc version newer than 2.35.
 
 ## Adding a language
 
