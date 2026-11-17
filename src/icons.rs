@@ -15,6 +15,8 @@ pub enum Icon {
     Sun,
     Moon,
     Close,
+    Heart,
+    Github,
 }
 
 /// Maps the 24x24 design grid onto the target square.
@@ -99,6 +101,28 @@ pub fn paint(p: &Painter, icon: Icon, rect: Rect, color: Color32) {
             line(vec![(18.0, 6.0), (6.0, 18.0)], false);
         }
         Icon::ChevronRight => line(vec![(9.0, 5.5), (15.5, 12.0), (9.0, 18.5)], false),
+        Icon::Heart => {
+            let at = |t: f32| {
+                let x = 16.0 * t.sin().powi(3);
+                let y = 13.0 * t.cos() - 5.0 * (2.0 * t).cos() - 2.0 * (3.0 * t).cos() - (4.0 * t).cos();
+                (12.0 + x * 0.6, 11.0 - y * 0.6)
+            };
+            // The heart is concave at the top: fill each lobe as its own convex polygon.
+            for range in [0.0..=PI, PI..=TAU] {
+                let (from, to) = (*range.start(), *range.end());
+                let half: Vec<(f32, f32)> =
+                    (0..=24).map(|i| at(from + (to - from) * i as f32 / 24.0)).collect();
+                p.add(Shape::convex_polygon(g.pts(&half), color, Stroke::NONE));
+            }
+        }
+        Icon::Github => {
+            // Simple code-branch glyph: two nodes joined by a trunk and a branch.
+            line(vec![(7.0, 6.0), (7.0, 18.0)], false);
+            line(rounded(&[(17.0, 8.0), (17.0, 11.0), (7.0, 15.0)], 2.0, false), false);
+            for (cx, cy) in [(7.0, 5.0), (7.0, 19.0), (17.0, 6.0)] {
+                line(arc(cx, cy, 2.2, 0.0, TAU), true);
+            }
+        }
         Icon::ChevronDown => line(vec![(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)], false),
         Icon::Home => {
             line(rounded(&[(3.0, 11.0), (12.0, 3.0), (21.0, 11.0)], 1.0, false), false);

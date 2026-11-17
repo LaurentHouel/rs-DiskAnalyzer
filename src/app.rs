@@ -4,7 +4,7 @@ use crate::icons::Icon;
 use crate::scan::{self, Node, ScanHandle};
 use crate::i18n::{Key, Lang, format_age, format_duration, format_items, format_size, tr, trf};
 use crate::util::{delete_permanently, reveal_in_file_manager};
-use crate::widgets::{Btn, Crumb, breadcrumb, divider, status_pill, tool_button};
+use crate::widgets::{Btn, Crumb, breadcrumb, divider, footer, status_pill, tool_button};
 use crate::{rings, theme, treemap};
 use egui::{
     Align2, CentralPanel, Color32, CornerRadius, FontId, Panel, Rect, ScrollArea, Sense, Shape,
@@ -15,6 +15,7 @@ use std::path::{Component, PathBuf};
 use std::sync::atomic::Ordering;
 
 const MAX_RECENT: usize = 5;
+const REPO_URL: &str = "https://github.com/LaurentHouel/rs-DiskAnalyzer";
 const CARD_W: f32 = 250.0;
 const CARD_H: f32 = 84.0;
 const CARD_GAP: f32 = 10.0;
@@ -140,6 +141,9 @@ impl App {
             old.cancel.store(true, Ordering::Relaxed);
         }
         self.message = None;
+        self.pending_trash = None;
+        self.pending_delete = None;
+        self.info = None;
         self.recent.retain(|p| p != &path);
         self.recent.insert(0, path.clone());
         self.recent.truncate(MAX_RECENT);
@@ -366,24 +370,41 @@ impl App {
         self.message = Some((false, trf(self.lang, key, &[&name])));
     }
 
-    fn scanning_screen(&self, ui: &mut Ui) {
-        let Some(scan) = &self.scan else { return };
+    /// Progress page shown for every scan, including a rescan over an existing result.
+    /// Returns true when the user asked to cancel.
+    fn scanning_screen(&self, ui: &mut Ui) -> bool {
+        let Some(scan) = &self.scan else { return false };
+        let lang = self.lang;
+        let pal = theme::Palette::new(ui.visuals().dark_mode);
+        let mut cancelled = false;
         ui.vertical_centered(|ui| {
             ui.add_space(ui.available_height() / 3.0);
             ui.spinner();
-            ui.label(trf(self.lang, Key::ScanningPath, &[&scan.path.display().to_string()]));
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(trf(lang, Key::ScanningPath, &[&scan.path.display().to_string()]))
+                    .size(16.0)
+                    .strong(),
+            );
             let p = &scan.progress;
-            ui.label(trf(
-                self.lang,
-                Key::ScanDetails,
-                &[
-                    &p.dirs.load(Ordering::Relaxed).to_string(),
-                    &p.files.load(Ordering::Relaxed).to_string(),
-                    &format_size(self.lang, p.bytes.load(Ordering::Relaxed)),
-                    &format!("{:.0}", scan.started.elapsed().as_secs_f32()),
-                ],
-            ));
+            ui.label(
+                egui::RichText::new(trf(
+                    lang,
+                    Key::ScanDetails,
+                    &[
+                        &p.dirs.load(Ordering::Relaxed).to_string(),
+                        &p.files.load(Ordering::Relaxed).to_string(),
+                        &format_size(lang, p.bytes.load(Ordering::Relaxed)),
+                        &format!("{:.0}", scan.started.elapsed().as_secs_f32()),
+                    ],
+                ))
+                .weak(),
+            );
+            ui.add_space(14.0);
+            let cancel = Btn::icon(Icon::Close, tr(lang, Key::Cancel)).with_text(tr(lang, Key::Cancel));
+            cancelled = tool_button(ui, &pal, true, cancel).clicked();
         });
+        cancelled
     }
 
     /// Start page: nothing is scanned until the user picks a folder.
@@ -989,14 +1010,38 @@ impl App {
             ui.add_space(12.0);
         });
 
-        if self.root.is_none() {
+        // Added before the other panels so it stays the outermost bottom bar.
+        let footer_frame = egui::Frame::new()
+            .fill(ui.visuals().panel_fill)
+            .inner_margin(egui::Margin::symmetric(14, 0));
+        let pal = theme::Palette::new(ui.visuals().dark_mode);
+        let mut open_repo = false;
+        Panel::bottom("footer").frame(footer_frame).show(ui, |ui| {
+            open_repo = footer(
+                ui,
+                &pal,
+                &format!("Disk Analyzer v{}", env!("CARGO_PKG_VERSION")),
+                tr(self.lang, Key::MadeWith),
+                "GitHub",
+                tr(self.lang, Key::GithubTip),
+            );
+        });
+        if open_repo {
+            ui.ctx().open_url(egui::OpenUrl::new_tab(REPO_URL));
+        }
+
+        if self.scan.is_some() || self.root.is_none() {
+            let mut cancelled = false;
             CentralPanel::default().show(ui, |ui| {
                 if self.scan.is_some() {
-                    self.scanning_screen(ui);
+                    cancelled = self.scanning_screen(ui);
                 } else {
                     self.welcome_screen(ui);
                 }
             });
+            if cancelled {
+                self.go_to_start_screen();
+            }
             return;
         }
 
@@ -1359,7 +1404,7 @@ mod tests {
             .build_ui_state(|ui, app: &mut App| app.show(ui), app);
         harness.run();
 
-        let point = egui::pos2(1070.0, 620.0);
+        let point = egui::pos2(1070.0, 585.0);
         harness.hover_at(point);
         harness.run();
         harness.event(egui::Event::PointerButton {
@@ -1527,7 +1572,9 @@ mod tests {
         harness.step();
         assert!(harness.state().scan.is_some());
 
-        harness.get_by_label("Cancel").click();
+        // Cancel is offered both in the title row and on the progress page.
+        assert_eq!(harness.query_all_by_label("Cancel").count(), 2);
+        harness.query_all_by_label("Cancel").last().unwrap().click();
         harness.run();
 
         assert!(harness.state().scan.is_none());
@@ -1535,6 +1582,30 @@ mod tests {
         harness.get_by_label("Choose what to scan. Nothing is scanned until you ask.");
     }
 
+
+    #[test]
+    fn rescanning_shows_progress_and_cancel_instead_of_the_old_result() {
+        let mut app = App::empty(Lang::En, Vec::new());
+        app.root = Some(sample_root());
+        app.root_path = PathBuf::from("/data");
+        let mut harness = Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1100.0, 700.0))
+            .build_ui_state(|ui, app: &mut App| app.show(ui), app);
+        harness.run();
+        assert!(harness.query_by_label_contains("Rings Chart").is_some());
+
+        let ctx = harness.ctx.clone();
+        harness.state_mut().start_scan(&ctx, PathBuf::from("/"));
+        harness.step();
+
+        assert!(harness.query_by_label_contains("Rings Chart").is_none(), "old result should be hidden");
+        assert!(harness.query_by_label_contains("Scanning /").is_some());
+        harness.query_all_by_label("Cancel").last().unwrap().click();
+        harness.run();
+        assert!(harness.state().scan.is_none());
+        assert!(harness.state().root.is_none());
+    }
 
     #[test]
     fn stored_column_widths_are_validated() {

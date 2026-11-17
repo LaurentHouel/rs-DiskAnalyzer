@@ -180,3 +180,49 @@ fn separator(ui: &mut Ui, pal: &Palette) {
     let (rect, _) = ui.allocate_exact_size(vec2(14.0, 24.0), Sense::hover());
     icons::paint(ui.painter(), Icon::ChevronRight, Rect::from_center_size(rect.center(), vec2(10.0, 10.0)), pal.btn_disabled);
 }
+
+/// Bottom bar: version on the left, credits in the middle, project link on the right.
+/// Returns true when the GitHub link was clicked.
+pub fn footer(ui: &mut Ui, pal: &Palette, version: &str, credits: &str, link: &str, link_tip: &str) -> bool {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
+    let cy = rect.center().y;
+    let weak = ui.visuals().weak_text_color();
+    let font = FontId::proportional(12.5);
+    ui.painter().text(rect.left_center(), egui::Align2::LEFT_CENTER, version, font.clone(), weak);
+
+    // The link is the right-most element; the credits are centered when there is room.
+    let link_galley = ui.painter().layout_no_wrap(link.to_owned(), font.clone(), weak);
+    let link_w = ICON_SMALL + 6.0 + link_galley.size().x;
+    let link_rect = Rect::from_min_size(pos2(rect.right() - link_w - 12.0, cy - 11.0), vec2(link_w + 12.0, 22.0));
+    let resp = ui
+        .interact(link_rect, ui.scope_id().with("footer_link"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(link_tip);
+    let color = if resp.hovered() { pal.accent } else { weak };
+    icons::paint(
+        ui.painter(),
+        Icon::Github,
+        Rect::from_center_size(pos2(link_rect.left() + 6.0 + ICON_SMALL / 2.0, cy), vec2(ICON_SMALL, ICON_SMALL)),
+        color,
+    );
+    ui.painter().galley(pos2(link_rect.left() + 6.0 + ICON_SMALL + 6.0, cy - link_galley.size().y / 2.0), link_galley, color);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, link));
+
+    let credits_galley = ui.painter().layout_no_wrap(credits.to_owned(), font, weak);
+    let heart_w = ICON_SMALL + 6.0;
+    let credits_w = heart_w + credits_galley.size().x;
+    let left_edge = rect.left() + 160.0;
+    let x = (rect.center().x - credits_w / 2.0).max(left_edge);
+    if x + credits_w < link_rect.left() - 8.0 {
+        icons::paint(
+            ui.painter(),
+            Icon::Heart,
+            Rect::from_center_size(pos2(x + ICON_SMALL / 2.0, cy), vec2(ICON_SMALL, ICON_SMALL)),
+            Color32::from_rgb(232, 84, 74),
+        );
+        ui.painter().galley(pos2(x + heart_w, cy - credits_galley.size().y / 2.0), credits_galley, weak);
+    }
+    resp.clicked()
+}
+
+const ICON_SMALL: f32 = 14.0;

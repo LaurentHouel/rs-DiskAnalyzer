@@ -81,6 +81,8 @@ pub enum Key {
     ShareOfParent,
     ShareOfScan,
     Close,
+    MadeWith,
+    GithubTip,
     DeletePermanently,
     ConfirmDelete,
     DeleteFailed,
@@ -225,6 +227,18 @@ pub fn tr(lang: Lang, key: Key) -> &'static str {
             "Part de l’analyse complète",
             "Parte del análisis completo",
             "Anteil an der gesamten Analyse",
+        ],
+        MadeWith => [
+            "Made with love by lowlowell",
+            "Fait avec amour par lowlowell",
+            "Hecho con amor por lowlowell",
+            "Mit Liebe gemacht von lowlowell",
+        ],
+        GithubTip => [
+            "Open the project on GitHub",
+            "Ouvrir le projet sur GitHub",
+            "Abrir el proyecto en GitHub",
+            "Projekt auf GitHub öffnen",
         ],
         Close => ["Close", "Fermer", "Cerrar", "Schließen"],
         DeletePermanently => [
