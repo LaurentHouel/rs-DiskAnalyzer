@@ -49,7 +49,7 @@ install -D -m 644 "$ROOT/assets/icon-256.png" \
   "$deb_root/usr/share/icons/hicolor/256x256/apps/rs-disk-analyzer.png"
 mkdir -p "$deb_root/DEBIAN"
 shlib_dependencies="$(dpkg-shlibdeps -O -e "$BINARY" | sed -n 's/^shlibs:Depends=//p')"
-extra_dependencies="libxkbcommon0, libwayland-client0, libxcb1, libgl1"
+extra_dependencies="libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, libwayland-egl1, libxcb1, libxcb-randr0, libxcb-shape0, libxcb-xfixes0, libx11-6, libxcursor1, libxi6, libxrandr2, libxfixes3, libxext6, libgl1"
 if [ -n "$shlib_dependencies" ]; then
   dependencies="$shlib_dependencies, $extra_dependencies"
 else
@@ -61,7 +61,7 @@ Version: $VERSION
 Architecture: $DEB_ARCH
 Section: utils
 Priority: optional
-Maintainer: rs-DiskAnalyzer contributors
+Maintainer: rs-DiskAnalyzer contributors <noreply@github.com>
 Depends: $dependencies
 Description: Visualize disk usage with a treemap and rings chart
 CONTROL
