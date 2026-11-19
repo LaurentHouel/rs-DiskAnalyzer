@@ -3,10 +3,10 @@ use std::fs::{self, Metadata};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime};
 #[cfg(unix)]
-use std::{collections::HashSet, sync::Mutex};
+use std::collections::HashSet;
 
 /// A file or directory. Children are sorted by decreasing size.
 pub struct Node {
@@ -78,12 +78,48 @@ impl Node {
     }
 }
 
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub(crate) enum ScanActivityKind {
+    CheckingRoot,
+    ReadingDirectory,
+    CheckingEntries,
+}
+
+pub(crate) struct ScanActivity {
+    pub kind: ScanActivityKind,
+    pub path: PathBuf,
+}
+
 #[derive(Default)]
 pub struct Progress {
     pub files: AtomicU64,
     pub dirs: AtomicU64,
     pub bytes: AtomicU64,
     pub errors: AtomicU64,
+    activity_kind: std::sync::atomic::AtomicU8,
+    activity_path: Mutex<PathBuf>,
+}
+
+impl Progress {
+    pub(crate) fn set_activity(&self, kind: ScanActivityKind, path: &Path) {
+        *self.activity_path.lock().unwrap() = path.to_path_buf();
+        self.activity_kind.store(kind as u8, Ordering::Release);
+    }
+
+    fn set_activity_kind(&self, kind: ScanActivityKind) {
+        self.activity_kind.store(kind as u8, Ordering::Release);
+    }
+
+    pub(crate) fn activity(&self) -> ScanActivity {
+        let kind = match self.activity_kind.load(Ordering::Acquire) {
+            0 => ScanActivityKind::CheckingRoot,
+            1 => ScanActivityKind::ReadingDirectory,
+            _ => ScanActivityKind::CheckingEntries,
+        };
+        let path = self.activity_path.lock().unwrap().clone();
+        ScanActivity { kind, path }
+    }
 }
 
 pub struct ScanHandle {
@@ -117,6 +153,7 @@ pub fn start(path: PathBuf, ctx: egui::Context) -> ScanHandle {
     };
 
     std::thread::spawn(move || {
+        progress.set_activity(ScanActivityKind::CheckingRoot, &path);
         let meta = fs::symlink_metadata(&path);
         let shared = Shared {
             progress,
@@ -149,6 +186,7 @@ pub fn start(path: PathBuf, ctx: egui::Context) -> ScanHandle {
 
 fn scan_dir(path: &Path, name: String, meta: &Metadata, shared: &Shared) -> Node {
     shared.progress.dirs.fetch_add(1, Ordering::Relaxed);
+    shared.progress.set_activity(ScanActivityKind::ReadingDirectory, path);
 
     let entries: Vec<fs::DirEntry> = match fs::read_dir(path) {
         Ok(rd) => rd.flatten().collect(),
@@ -165,6 +203,7 @@ fn scan_dir(path: &Path, name: String, meta: &Metadata, shared: &Shared) -> Node
                 return None;
             }
             // DirEntry::metadata does not follow symlinks.
+            shared.progress.set_activity_kind(ScanActivityKind::CheckingEntries);
             let Ok(md) = entry.metadata() else {
                 shared.progress.errors.fetch_add(1, Ordering::Relaxed);
                 return None;

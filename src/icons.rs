@@ -15,6 +15,7 @@ pub enum Icon {
     Sun,
     Moon,
     Close,
+    Logs,
     Heart,
     Github,
 }
@@ -99,6 +100,12 @@ pub fn paint(p: &Painter, icon: Icon, rect: Rect, color: Color32) {
         Icon::Close => {
             line(vec![(6.0, 6.0), (18.0, 18.0)], false);
             line(vec![(18.0, 6.0), (6.0, 18.0)], false);
+        }
+        Icon::Logs => {
+            line(rounded(&[(5.0, 3.0), (19.0, 3.0), (21.0, 5.0), (21.0, 21.0), (3.0, 21.0), (3.0, 5.0)], 1.5, true), true);
+            for y in [8.0, 12.0, 16.0] {
+                line(vec![(7.0, y), (17.0, y)], false);
+            }
         }
         Icon::ChevronRight => line(vec![(9.0, 5.5), (15.5, 12.0), (9.0, 18.5)], false),
         Icon::Heart => {

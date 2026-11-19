@@ -5,6 +5,7 @@ Cross-platform (macOS, Windows, Linux) disk usage analyzer written in Rust with 
 - Fast parallel scan of any folder, started only when you choose one: a mounted drive (internal SSD/HDD, removable, network, optical, with free space), the home folder, a folder picker or a recent folder
 - Folder tree with size, item count and modification date; click a column header to sort, drag the edge of a header to resize columns (double-click to reset)
 - Treemap and rings charts, synchronized with the tree
+- Session activity log in its own window, including a diagnostic after 10 seconds without scan progress
 - Move files and folders to the trash (context menu, toolbar button, `Delete` key) or delete them permanently (context menu, with confirmation); an information window shows the full path, size, shares and modification date
 - Languages: English, Français, Español, Deutsch (English by default, switchable in the toolbar; your choice is remembered)
 

@@ -1,7 +1,7 @@
 use crate::chart::{ChartAction, ChartCtx};
 use crate::drives::{self, Drive};
 use crate::icons::Icon;
-use crate::scan::{self, Node, ScanHandle};
+use crate::scan::{self, Node, ScanActivityKind, ScanHandle};
 use crate::i18n::{Key, Lang, format_age, format_duration, format_items, format_size, tr, trf};
 use crate::util::{delete_permanently, reveal_in_file_manager};
 use crate::widgets::{Btn, Crumb, breadcrumb, divider, footer, status_pill, tool_button};
@@ -12,9 +12,12 @@ use egui::{
 };
 use std::collections::HashSet;
 use std::path::{Component, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 const MAX_RECENT: usize = 5;
+const MAX_LOG_ENTRIES: usize = 500;
+const SCAN_STALL_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
 const REPO_URL: &str = "https://github.com/LaurentHouel/rs-DiskAnalyzer";
 const CARD_W: f32 = 250.0;
 const CARD_H: f32 = 84.0;
@@ -58,6 +61,17 @@ struct Row<'a> {
     parent_size: u64,
 }
 
+struct LogEntry {
+    elapsed: std::time::Duration,
+    text: String,
+}
+
+struct ScanMonitor {
+    snapshot: (u64, u64, u64),
+    last_progress: std::time::Instant,
+    stall_logged: bool,
+}
+
 pub struct App {
     root: Option<Node>,
     root_path: PathBuf,
@@ -78,6 +92,11 @@ pub struct App {
     info: Option<Vec<usize>>,
     /// Last status message; the flag is true for errors.
     message: Option<(bool, String)>,
+    logs: Arc<Mutex<Vec<LogEntry>>>,
+    show_logs: Arc<AtomicBool>,
+    scan_monitor: Option<ScanMonitor>,
+    root_ctx: Option<egui::Context>,
+    started_at: std::time::Instant,
     recent: Vec<PathBuf>,
     drives: Vec<Drive>,
     /// Widths of the Size, Contents and Modified columns.
@@ -99,6 +118,7 @@ impl App {
             .map(|r| r.lines().map(PathBuf::from).collect())
             .unwrap_or_default();
         let mut app = Self::empty(lang, recent);
+        app.record_activity(tr(lang, Key::AppStarted).to_owned());
         app.dark = cc.storage.and_then(|s| s.get_string("dark")).is_none_or(|d| d == "1");
         theme::apply(&cc.egui_ctx, app.dark);
         if let Some(w) = cc.storage.and_then(|s| s.get_string("cols")).and_then(|c| parse_widths(&c)) {
@@ -128,6 +148,11 @@ impl App {
             pending_delete: None,
             info: None,
             message: None,
+            logs: Arc::new(Mutex::new(Vec::new())),
+            show_logs: Arc::new(AtomicBool::new(false)),
+            scan_monitor: None,
+            root_ctx: None,
+            started_at: std::time::Instant::now(),
             recent,
             drives: drives::list(),
             col_widths: DEFAULT_COLS,
@@ -138,8 +163,18 @@ impl App {
 
     fn start_scan(&mut self, ctx: &egui::Context, path: PathBuf) {
         if let Some(old) = self.scan.take() {
+            self.record_activity(trf(
+                self.lang,
+                Key::LogScanCancelled,
+                &[&old.path.display().to_string()],
+            ));
             old.cancel.store(true, Ordering::Relaxed);
         }
+        self.record_activity(trf(
+            self.lang,
+            Key::LogScanStarted,
+            &[&path.display().to_string()],
+        ));
         self.message = None;
         self.pending_trash = None;
         self.pending_delete = None;
@@ -148,11 +183,18 @@ impl App {
         self.recent.insert(0, path.clone());
         self.recent.truncate(MAX_RECENT);
         self.scan = Some(scan::start(path, ctx.clone()));
+        self.scan_monitor = None;
     }
 
     /// Back to the selection screen: drops the current result and cancels any running scan.
     fn go_to_start_screen(&mut self) {
+        self.scan_monitor = None;
         if let Some(scan) = self.scan.take() {
+            self.record_activity(trf(
+                self.lang,
+                Key::LogScanCancelled,
+                &[&scan.path.display().to_string()],
+            ));
             scan.cancel.store(true, Ordering::Relaxed);
         }
         self.root = None;
@@ -171,6 +213,18 @@ impl App {
     fn poll_scan(&mut self) {
         let Some(scan) = &self.scan else { return };
         if let Ok(root) = scan.rx.try_recv() {
+            let log = trf(
+                self.lang,
+                Key::LogScanCompleted,
+                &[
+                    &scan.path.display().to_string(),
+                    &scan.progress.dirs.load(Ordering::Relaxed).to_string(),
+                    &scan.progress.files.load(Ordering::Relaxed).to_string(),
+                    &format_size(self.lang, scan.progress.bytes.load(Ordering::Relaxed)),
+                    &scan.progress.errors.load(Ordering::Relaxed).to_string(),
+                    &format_duration(self.lang, scan.started.elapsed()),
+                ],
+            );
             self.root_path = scan.path.clone();
             self.root = Some(root);
             self.view.clear();
@@ -178,7 +232,141 @@ impl App {
             self.expanded.clear();
             self.scan_time = Some(scan.started.elapsed());
             self.scan = None;
+            self.scan_monitor = None;
+            self.record_activity(log);
         }
+    }
+
+    fn record_activity(&mut self, text: String) {
+        {
+            let mut logs = self.logs.lock().unwrap();
+            if logs.len() == MAX_LOG_ENTRIES {
+                logs.remove(0);
+            }
+            logs.push(LogEntry {
+                elapsed: self.started_at.elapsed(),
+                text,
+            });
+        }
+        if self.show_logs.load(Ordering::Relaxed)
+            && let Some(ctx) = &self.root_ctx
+        {
+            ctx.request_repaint_of(egui::ViewportId::from_hash_of("activity_logs"));
+        }
+    }
+
+    fn monitor_scan(&mut self) {
+        let Some(scan) = self.scan.as_ref() else {
+            self.scan_monitor = None;
+            return;
+        };
+        let snapshot = (
+            scan.progress.dirs.load(Ordering::Relaxed),
+            scan.progress.files.load(Ordering::Relaxed),
+            scan.progress.errors.load(Ordering::Relaxed),
+        );
+        let now = std::time::Instant::now();
+        let message = {
+            let monitor = self.scan_monitor.get_or_insert(ScanMonitor {
+                snapshot,
+                last_progress: now,
+                stall_logged: false,
+            });
+            if monitor.snapshot != snapshot {
+                monitor.snapshot = snapshot;
+                monitor.last_progress = now;
+                monitor.stall_logged = false;
+                None
+            } else if monitor.stall_logged || now.duration_since(monitor.last_progress) < SCAN_STALL_AFTER {
+                None
+            } else {
+                monitor.stall_logged = true;
+                let activity = scan.progress.activity();
+                let path = activity.path.display().to_string();
+                let activity = match activity.kind {
+                    ScanActivityKind::CheckingRoot => {
+                        trf(self.lang, Key::ScanActivityCheckingRoot, &[&path])
+                    }
+                    ScanActivityKind::ReadingDirectory => {
+                        trf(self.lang, Key::ScanActivityReadingDirectory, &[&path])
+                    }
+                    ScanActivityKind::CheckingEntries => {
+                        trf(self.lang, Key::ScanActivityCheckingEntries, &[&path])
+                    }
+                };
+                Some(trf(
+                    self.lang,
+                    Key::LogScanNoProgress,
+                    &[
+                        &format_duration(self.lang, now.duration_since(monitor.last_progress)),
+                        &snapshot.0.to_string(),
+                        &snapshot.1.to_string(),
+                        &activity,
+                    ],
+                ))
+            }
+        };
+        if let Some(message) = message {
+            self.record_activity(message);
+        }
+    }
+
+    fn show_logs_window(&self, ctx: &egui::Context) {
+        if !self.show_logs.load(Ordering::Relaxed) {
+            return;
+        }
+        let logs = self.logs.clone();
+        let show_logs = self.show_logs.clone();
+        let parent_ctx = ctx.clone();
+        let lang = self.lang;
+        let viewport_id = egui::ViewportId::from_hash_of("activity_logs");
+        let viewport = egui::ViewportBuilder::default()
+            .with_title(tr(lang, Key::LogsTitle))
+            .with_position([200.0, 120.0])
+            .with_inner_size([680.0, 480.0])
+            .with_min_inner_size([420.0, 240.0])
+            .with_resizable(true);
+        ctx.show_viewport_deferred(viewport_id, viewport, move |ctx, _class| {
+            if ctx.input(|i| i.viewport().close_requested()) {
+                show_logs.store(false, Ordering::Relaxed);
+                parent_ctx.request_repaint();
+                return;
+            }
+
+            let mut close = false;
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.heading(tr(lang, Key::LogsTitle));
+                ui.add_space(4.0);
+                let logs_height = ui.available_height() - 40.0;
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .max_height(logs_height.max(80.0))
+                    .show(ui, |ui| {
+                        let logs = logs.lock().unwrap();
+                        if logs.is_empty() {
+                            ui.label(tr(lang, Key::LogsEmpty));
+                        } else {
+                            for entry in logs.iter().rev() {
+                                let seconds = entry.elapsed.as_secs();
+                                let timestamp =
+                                    format!("{:02}:{:02}:{:02}", seconds / 3600, (seconds / 60) % 60, seconds % 60);
+                                ui.horizontal_top(|ui| {
+                                    ui.label(egui::RichText::new(timestamp).monospace().weak());
+                                    ui.add(egui::Label::new(egui::RichText::new(&entry.text).monospace()).wrap());
+                                });
+                            }
+                        }
+                    });
+                ui.add_space(8.0);
+                if ui.button(tr(lang, Key::Close)).clicked() {
+                    close = true;
+                }
+            });
+            if close {
+                show_logs.store(false, Ordering::Relaxed);
+                parent_ctx.request_repaint();
+            }
+        });
     }
 
     fn go_up(&mut self) {
@@ -340,7 +528,9 @@ impl App {
         };
         if let Err(e) = result {
             let key = if permanent { Key::DeleteFailed } else { Key::TrashFailed };
-            self.message = Some((true, trf(self.lang, key, &[&e])));
+            let message = trf(self.lang, key, &[&e]);
+            self.record_activity(message.clone());
+            self.message = Some((true, message));
             return;
         }
 
@@ -367,7 +557,9 @@ impl App {
             .filter_map(|e| root.resolve(root_path, e))
             .collect();
         let key = if permanent { Key::Deleted } else { Key::Trashed };
-        self.message = Some((false, trf(self.lang, key, &[&name])));
+        let message = trf(self.lang, key, &[&name]);
+        self.record_activity(message.clone());
+        self.message = Some((false, message));
     }
 
     /// Progress page shown for every scan, including a rescan over an existing result.
@@ -631,6 +823,14 @@ impl App {
                 {
                     self.dark = !self.dark;
                     theme::apply(&ctx, self.dark);
+                }
+
+                let logs = Btn::icon(Icon::Logs, tr(lang, Key::LogsTip)).with_text(tr(lang, Key::Logs));
+                if tool_button(ui, &pal, true, logs)
+                    .on_hover_text(tr(lang, Key::LogsTip))
+                    .clicked()
+                {
+                    self.show_logs.store(true, Ordering::Relaxed);
                 }
 
                 let language = Btn::icon(Icon::Globe, tr(lang, Key::Language))
@@ -983,7 +1183,9 @@ impl eframe::App for App {
 
 impl App {
     fn show(&mut self, ui: &mut Ui) {
+        self.root_ctx = Some(ui.ctx().clone());
         self.poll_scan();
+        self.monitor_scan();
         if self.scan.is_some() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -1029,6 +1231,8 @@ impl App {
         if open_repo {
             ui.ctx().open_url(egui::OpenUrl::new_tab(REPO_URL));
         }
+
+        self.show_logs_window(ui.ctx());
 
         if self.scan.is_some() || self.root.is_none() {
             let mut cancelled = false;
@@ -1366,6 +1570,55 @@ mod tests {
         assert!(harness.state().root.is_none());
         assert!(harness.state().scan.is_none());
         harness.get_by_label("Choose what to scan. Nothing is scanned until you ask.");
+    }
+
+    #[test]
+    fn toolbar_logs_button_opens_logs_window() {
+        let mut app = App::empty(Lang::En, Vec::new());
+        app.root = Some(sample_root());
+        app.root_path = PathBuf::from("/data");
+        app.record_activity("Test scan completed".to_owned());
+        let mut harness = Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1100.0, 700.0))
+            .build_ui_state(|ui, app: &mut App| app.show(ui), app);
+        harness.run();
+
+        harness.get_by_label("Show activity logs").click();
+        harness.run();
+
+        assert!(harness.state().show_logs.load(Ordering::Relaxed));
+        assert!(harness.query_all_by_label("Activity logs").count() > 0);
+        harness.get_by_label("Test scan completed");
+    }
+
+    #[test]
+    fn scan_monitor_logs_the_last_activity_once_when_progress_stalls() {
+        let mut app = App::empty(Lang::En, Vec::new());
+        let path = PathBuf::from("/slow-folder");
+        let progress = Arc::new(scan::Progress::default());
+        progress.set_activity(ScanActivityKind::ReadingDirectory, &path);
+        let (_tx, rx) = std::sync::mpsc::channel();
+        app.scan = Some(ScanHandle {
+            path,
+            progress,
+            cancel: Arc::new(AtomicBool::new(false)),
+            rx,
+            started: std::time::Instant::now(),
+        });
+        app.scan_monitor = Some(ScanMonitor {
+            snapshot: (0, 0, 0),
+            last_progress: std::time::Instant::now() - SCAN_STALL_AFTER,
+            stall_logged: false,
+        });
+
+        app.monitor_scan();
+        app.monitor_scan();
+
+        let logs = app.logs.lock().unwrap();
+        assert_eq!(logs.len(), 1);
+        assert!(logs[0].text.contains("No progress"));
+        assert!(logs[0].text.contains("Reading folder: /slow-folder"));
     }
 
     #[test]
