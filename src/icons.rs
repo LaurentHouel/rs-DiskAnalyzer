@@ -18,6 +18,7 @@ pub enum Icon {
     Logs,
     Heart,
     Github,
+    Update,
 }
 
 /// Maps the 24x24 design grid onto the target square.
@@ -129,6 +130,11 @@ pub fn paint(p: &Painter, icon: Icon, rect: Rect, color: Color32) {
             for (cx, cy) in [(7.0, 5.0), (7.0, 19.0), (17.0, 6.0)] {
                 line(arc(cx, cy, 2.2, 0.0, TAU), true);
             }
+        }
+        Icon::Update => {
+            line(vec![(12.0, 3.0), (12.0, 15.0)], false);
+            line(vec![(7.0, 10.0), (12.0, 15.0), (17.0, 10.0)], false);
+            line(vec![(5.0, 18.0), (5.0, 21.0), (19.0, 21.0), (19.0, 18.0)], false);
         }
         Icon::ChevronDown => line(vec![(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)], false),
         Icon::Home => {

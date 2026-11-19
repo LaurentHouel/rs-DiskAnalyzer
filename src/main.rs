@@ -9,6 +9,7 @@ mod rings;
 mod scan;
 mod theme;
 mod treemap;
+mod update;
 mod util;
 mod widgets;
 

@@ -4,8 +4,8 @@ use crate::icons::Icon;
 use crate::scan::{self, Node, ScanActivityKind, ScanHandle};
 use crate::i18n::{Key, Lang, format_age, format_duration, format_items, format_size, tr, trf};
 use crate::util::{delete_permanently, reveal_in_file_manager};
-use crate::widgets::{Btn, Crumb, breadcrumb, divider, footer, status_pill, tool_button};
-use crate::{rings, theme, treemap};
+use crate::widgets::{Btn, Crumb, FooterAction, breadcrumb, divider, footer, status_pill, tool_button};
+use crate::{rings, theme, treemap, update};
 use egui::{
     Align2, CentralPanel, Color32, CornerRadius, FontId, Panel, Rect, ScrollArea, Sense, Shape,
     Stroke, StrokeKind, Ui, pos2, vec2,
@@ -96,6 +96,8 @@ pub struct App {
     show_logs: Arc<AtomicBool>,
     scan_monitor: Option<ScanMonitor>,
     root_ctx: Option<egui::Context>,
+    update_check_rx: Option<std::sync::mpsc::Receiver<update::CheckResult>>,
+    update_available: Option<update::Release>,
     started_at: std::time::Instant,
     recent: Vec<PathBuf>,
     drives: Vec<Drive>,
@@ -119,6 +121,7 @@ impl App {
             .unwrap_or_default();
         let mut app = Self::empty(lang, recent);
         app.record_activity(tr(lang, Key::AppStarted).to_owned());
+        app.update_check_rx = Some(update::start_check(cc.egui_ctx.clone()));
         app.dark = cc.storage.and_then(|s| s.get_string("dark")).is_none_or(|d| d == "1");
         theme::apply(&cc.egui_ctx, app.dark);
         if let Some(w) = cc.storage.and_then(|s| s.get_string("cols")).and_then(|c| parse_widths(&c)) {
@@ -152,6 +155,8 @@ impl App {
             show_logs: Arc::new(AtomicBool::new(false)),
             scan_monitor: None,
             root_ctx: None,
+            update_check_rx: None,
+            update_available: None,
             started_at: std::time::Instant::now(),
             recent,
             drives: drives::list(),
@@ -252,6 +257,31 @@ impl App {
             && let Some(ctx) = &self.root_ctx
         {
             ctx.request_repaint_of(egui::ViewportId::from_hash_of("activity_logs"));
+        }
+    }
+
+    fn poll_update_check(&mut self) {
+        let result = match &self.update_check_rx {
+            Some(rx) => match rx.try_recv() {
+                Ok(result) => Some(result),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Some(Err("release check stopped before returning a result".to_owned()))
+                }
+            },
+            None => return,
+        };
+        let Some(result) = result else { return };
+        self.update_check_rx = None;
+        match result {
+            Ok(Some(release)) => {
+                self.record_activity(trf(self.lang, Key::UpdateAvailable, &[&release.version]));
+                self.update_available = Some(release);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                self.record_activity(trf(self.lang, Key::UpdateCheckFailed, &[&error]));
+            }
         }
     }
 
@@ -1184,6 +1214,7 @@ impl eframe::App for App {
 impl App {
     fn show(&mut self, ui: &mut Ui) {
         self.root_ctx = Some(ui.ctx().clone());
+        self.poll_update_check();
         self.poll_scan();
         self.monitor_scan();
         if self.scan.is_some() {
@@ -1217,19 +1248,31 @@ impl App {
             .fill(ui.visuals().panel_fill)
             .inner_margin(egui::Margin::symmetric(14, 0));
         let pal = theme::Palette::new(ui.visuals().dark_mode);
-        let mut open_repo = false;
+        let update_tip = self
+            .update_available
+            .as_ref()
+            .map(|release| trf(self.lang, Key::UpdateAvailableTip, &[&release.version]));
+        let mut footer_action = None;
         Panel::bottom("footer").frame(footer_frame).show(ui, |ui| {
-            open_repo = footer(
+            footer_action = footer(
                 ui,
                 &pal,
                 &format!("Disk Analyzer v{}", env!("CARGO_PKG_VERSION")),
                 tr(self.lang, Key::MadeWith),
+                tr(self.lang, Key::MadeBy),
                 "GitHub",
                 tr(self.lang, Key::GithubTip),
+                update_tip.as_deref(),
             );
         });
-        if open_repo {
-            ui.ctx().open_url(egui::OpenUrl::new_tab(REPO_URL));
+        match footer_action {
+            Some(FooterAction::Project) => ui.ctx().open_url(egui::OpenUrl::new_tab(REPO_URL)),
+            Some(FooterAction::Release) => {
+                if let Some(release) = &self.update_available {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(release.url.clone()));
+                }
+            }
+            None => {}
         }
 
         self.show_logs_window(ui.ctx());
@@ -1590,6 +1633,22 @@ mod tests {
         assert!(harness.state().show_logs.load(Ordering::Relaxed));
         assert!(harness.query_all_by_label("Activity logs").count() > 0);
         harness.get_by_label("Test scan completed");
+    }
+
+    #[test]
+    fn footer_shows_link_when_a_newer_release_is_available() {
+        let mut app = App::empty(Lang::En, Vec::new());
+        app.update_available = Some(update::Release {
+            version: "0.2.0".to_owned(),
+            url: "https://github.com/LaurentHouel/rs-DiskAnalyzer/releases/tag/v0.2.0".to_owned(),
+        });
+        let mut harness = Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1100.0, 700.0))
+            .build_ui_state(|ui, app: &mut App| app.show(ui), app);
+        harness.run();
+
+        harness.get_by_label("Open release 0.2.0 on GitHub");
     }
 
     #[test]

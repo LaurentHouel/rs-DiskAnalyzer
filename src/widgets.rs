@@ -7,6 +7,11 @@ const ICON: f32 = 16.0;
 const PAD: f32 = 11.0;
 const GAP: f32 = 8.0;
 
+pub enum FooterAction {
+    Project,
+    Release,
+}
+
 /// What a toolbar button shows; `label` is the accessible name (also used for tooltips).
 pub struct Btn<'a> {
     pub icon: Icon,
@@ -183,12 +188,46 @@ fn separator(ui: &mut Ui, pal: &Palette) {
 
 /// Bottom bar: version on the left, credits in the middle, project link on the right.
 /// Returns true when the GitHub link was clicked.
-pub fn footer(ui: &mut Ui, pal: &Palette, version: &str, credits: &str, link: &str, link_tip: &str) -> bool {
+pub fn footer(
+    ui: &mut Ui,
+    pal: &Palette,
+    version: &str,
+    credits_before_heart: &str,
+    credits_after_heart: &str,
+    link: &str,
+    link_tip: &str,
+    update_tip: Option<&str>,
+) -> Option<FooterAction> {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
     let cy = rect.center().y;
     let weak = ui.visuals().weak_text_color();
     let font = FontId::proportional(12.5);
-    ui.painter().text(rect.left_center(), egui::Align2::LEFT_CENTER, version, font.clone(), weak);
+    let version_rect =
+        ui.painter().text(rect.left_center(), egui::Align2::LEFT_CENTER, version, font.clone(), weak);
+    let mut action = None;
+    if let Some(tip) = update_tip {
+        let time = ui.ctx().input(|input| input.time);
+        let alpha = if time % 1.0 < 0.5 { 255 } else { 72 };
+        let icon_rect = Rect::from_center_size(
+            pos2(version_rect.right() + 13.0, cy),
+            vec2(ICON_SMALL + 4.0, ICON_SMALL + 4.0),
+        );
+        let update = ui
+            .interact(icon_rect, ui.scope_id().with("update_available"), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(tip);
+        update.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
+        icons::paint(
+            ui.painter(),
+            Icon::Update,
+            Rect::from_center_size(icon_rect.center(), vec2(ICON_SMALL, ICON_SMALL)),
+            Color32::from_rgba_unmultiplied(240, 160, 45, alpha),
+        );
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+        if update.clicked() {
+            action = Some(FooterAction::Release);
+        }
+    }
 
     // The link is the right-most element; the credits are centered when there is room.
     let link_galley = ui.painter().layout_no_wrap(link.to_owned(), font.clone(), weak);
@@ -208,21 +247,41 @@ pub fn footer(ui: &mut Ui, pal: &Palette, version: &str, credits: &str, link: &s
     ui.painter().galley(pos2(link_rect.left() + 6.0 + ICON_SMALL + 6.0, cy - link_galley.size().y / 2.0), link_galley, color);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, true, link));
 
-    let credits_galley = ui.painter().layout_no_wrap(credits.to_owned(), font, weak);
-    let heart_w = ICON_SMALL + 6.0;
-    let credits_w = heart_w + credits_galley.size().x;
+    let before_galley = ui.painter().layout_no_wrap(credits_before_heart.to_owned(), font.clone(), weak);
+    let after_galley = ui.painter().layout_no_wrap(credits_after_heart.to_owned(), font, weak);
+    let heart_gap = 4.0;
+    let heart_w = ICON_SMALL + 2.0 * heart_gap;
+    let credits_w = before_galley.size().x + heart_w + after_galley.size().x;
     let left_edge = rect.left() + 160.0;
     let x = (rect.center().x - credits_w / 2.0).max(left_edge);
     if x + credits_w < link_rect.left() - 8.0 {
+        ui.painter().galley(
+            pos2(x, cy - before_galley.size().y / 2.0),
+            before_galley.clone(),
+            weak,
+        );
         icons::paint(
             ui.painter(),
             Icon::Heart,
-            Rect::from_center_size(pos2(x + ICON_SMALL / 2.0, cy), vec2(ICON_SMALL, ICON_SMALL)),
+            Rect::from_center_size(
+                pos2(x + before_galley.size().x + heart_gap + ICON_SMALL / 2.0, cy),
+                vec2(ICON_SMALL, ICON_SMALL),
+            ),
             Color32::from_rgb(232, 84, 74),
         );
-        ui.painter().galley(pos2(x + heart_w, cy - credits_galley.size().y / 2.0), credits_galley, weak);
+        ui.painter().galley(
+            pos2(
+                x + before_galley.size().x + heart_w,
+                cy - after_galley.size().y / 2.0,
+            ),
+            after_galley,
+            weak,
+        );
     }
-    resp.clicked()
+    if resp.clicked() {
+        action = Some(FooterAction::Project);
+    }
+    action
 }
 
 const ICON_SMALL: f32 = 14.0;
