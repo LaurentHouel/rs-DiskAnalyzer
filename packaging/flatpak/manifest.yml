@@ -1,0 +1,21 @@
+app-id: io.github.laurenthouel.rs-disk-analyzer
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+command: rs-disk-analyzer
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=host
+modules:
+  - name: rs-disk-analyzer
+    buildsystem: simple
+    build-commands:
+      - install -D -m 755 rs-disk-analyzer /app/bin/rs-disk-analyzer
+      - install -D -m 644 rs-disk-analyzer.desktop /app/share/applications/io.github.laurenthouel.rs-disk-analyzer.desktop
+      - install -D -m 644 icon.png /app/share/icons/hicolor/256x256/apps/io.github.laurenthouel.rs-disk-analyzer.png
+    sources:
+      - type: dir
+        path: build-input

@@ -13,9 +13,9 @@ Cross-platform (macOS, Windows, Linux) disk usage analyzer written in Rust with 
 
 Pre-built packages for macOS (Apple Silicon / Intel), Windows and Linux (x86_64 / aarch64) are attached to each [release](../../releases):
 
-- **macOS:** a `Disk Analyzer.app` bundle (double-click, no Terminal window). It is not notarized: on first launch, right-click → Open. To build it yourself: `cargo build --release && scripts/bundle-macos.sh target/release/rs-disk-analyzer`.
-- **Windows:** `rs-disk-analyzer.exe`, a GUI executable without console window.
-- **Linux:** the binary plus a `.desktop` entry (`Terminal=false`).
+- **macOS:** a `.dmg` containing `Disk Analyzer.app` and an Applications shortcut (double-click, no Terminal window). It is not notarized: on first launch, right-click → Open.
+- **Windows:** a standalone `rs-disk-analyzer.exe` GUI executable without a console window, plus a zip archive.
+- **Linux:** `.deb`, `.AppImage` and `.flatpak` packages, plus a tarball. The Flatpak requests full filesystem access so scans and file removal work.
 
 ## Build
 
