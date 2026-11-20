@@ -19,18 +19,7 @@ const MAX_RECENT: usize = 5;
 const MAX_LOG_ENTRIES: usize = 500;
 const SCAN_STALL_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
 const REPO_URL: &str = "https://github.com/LaurentHouel/rs-DiskAnalyzer";
-const DEPENDENCIES: [&str; 10] = [
-    "dirs",
-    "eframe",
-    "egui",
-    "rayon",
-    "rfd",
-    "semver",
-    "serde_json",
-    "sysinfo",
-    "trash",
-    "ureq",
-];
+include!(concat!(env!("OUT_DIR"), "/dependencies.rs"));
 const CARD_W: f32 = 250.0;
 const CARD_H: f32 = 84.0;
 const CARD_GAP: f32 = 10.0;
@@ -1865,6 +1854,7 @@ mod tests {
 
         assert!(harness.state().show_about);
         harness.get_by_label("Libraries used in this application");
+        harness.get_by_label("cap-std");
         harness.get_by_label("eframe");
         harness.get_by_label("ureq");
     }

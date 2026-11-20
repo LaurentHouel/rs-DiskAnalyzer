@@ -3048,6 +3048,7 @@ dependencies = [
  "semver",
  "serde_json",
  "sysinfo",
+ "toml",
  "trash",
  "ureq",
  "winresource",
