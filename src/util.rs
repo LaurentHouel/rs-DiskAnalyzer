@@ -1,5 +1,8 @@
+use cap_std::ambient_authority;
+use cap_std::fs::Dir;
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Opens the system file manager with `path` selected.
 pub fn reveal_in_file_manager(path: &Path) {
@@ -16,10 +19,149 @@ pub fn reveal_in_file_manager(path: &Path) {
 }
 
 /// Removes a file or folder without going through the trash. Symlinks are removed, not followed.
-pub fn delete_permanently(path: &Path) -> std::io::Result<()> {
-    if std::fs::symlink_metadata(path)?.is_dir() {
-        std::fs::remove_dir_all(path)
+/// `on_path` is called with each file or directory as it is removed.
+pub fn delete_permanently(
+    path: &Path,
+    cancel: &AtomicBool,
+    mut on_path: impl FnMut(&Path),
+) -> std::io::Result<()> {
+    let parent_path = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
+    })?;
+    let parent = Dir::open_ambient_dir(parent_path, ambient_authority())?;
+    remove_entry(&parent, Path::new(name), path, cancel, &mut on_path)
+}
+
+fn remove_entry(
+    parent: &Dir,
+    name: &Path,
+    display_path: &Path,
+    cancel: &AtomicBool,
+    on_path: &mut impl FnMut(&Path),
+) -> std::io::Result<()> {
+    check_delete_cancelled(cancel)?;
+    if parent.symlink_metadata(name)?.is_dir() {
+        on_path(display_path);
+        check_delete_cancelled(cancel)?;
+        let dir = parent.open_dir(name)?;
+        check_delete_cancelled(cancel)?;
+        for entry in dir.read_dir(".")? {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let child_name = Path::new(&file_name);
+            let child_path = display_path.join(child_name);
+            remove_entry(&dir, child_name, &child_path, cancel, on_path)?;
+        }
+        on_path(display_path);
+        check_delete_cancelled(cancel)?;
+        dir.remove_open_dir()
     } else {
-        std::fs::remove_file(path)
+        on_path(display_path);
+        check_delete_cancelled(cancel)?;
+        parent.remove_file(name)
+    }
+}
+
+fn check_delete_cancelled(cancel: &AtomicBool) -> std::io::Result<()> {
+    if cancel.load(Ordering::Relaxed) {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "deletion cancelled",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn permanent_delete_reports_nested_files_as_it_removes_them() {
+        let root = std::env::temp_dir().join(format!(
+            "rs-da-delete-progress-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let file = nested.join("file.bin");
+        std::fs::write(&file, b"test").unwrap();
+
+        let mut removed = Vec::new();
+        delete_permanently(&root, &AtomicBool::new(false), |path| {
+            removed.push(path.to_path_buf())
+        })
+        .unwrap();
+
+        assert!(removed.contains(&file));
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn permanent_delete_stops_between_items_when_cancelled() {
+        let root = std::env::temp_dir().join(format!(
+            "rs-da-delete-cancel-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let first = root.join("first.bin");
+        let second = root.join("second.bin");
+        std::fs::write(&first, b"first").unwrap();
+        std::fs::write(&second, b"second").unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut files_seen = 0;
+
+        let error = delete_permanently(&root, &cancel, |path| {
+            if path.extension().is_some_and(|ext| ext == "bin") {
+                files_seen += 1;
+                if files_seen == 2 {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            }
+        })
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::Interrupted);
+        assert_ne!(first.exists(), second.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn permanent_delete_removes_symlinks_without_following_them() {
+        let base = std::env::temp_dir().join(format!(
+            "rs-da-delete-symlink-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let root = base.join("root");
+        let outside = base.join("outside.bin");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(&outside, b"preserve").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+
+        delete_permanently(&root, &AtomicBool::new(false), |_| {}).unwrap();
+
+        assert!(outside.exists());
+        std::fs::remove_file(outside).unwrap();
+        std::fs::remove_dir(base).unwrap();
     }
 }

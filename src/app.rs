@@ -84,6 +84,19 @@ struct ScanMonitor {
     stall_logged: bool,
 }
 
+enum DeleteOutcome {
+    Cancelled,
+    Failed(String),
+}
+
+struct DeleteHandle {
+    path: Vec<usize>,
+    name: String,
+    current_path: Arc<Mutex<PathBuf>>,
+    cancel: Arc<AtomicBool>,
+    rx: std::sync::mpsc::Receiver<Result<(), DeleteOutcome>>,
+}
+
 pub struct App {
     root: Option<Node>,
     root_path: PathBuf,
@@ -101,6 +114,7 @@ pub struct App {
     sort_desc: bool,
     pending_trash: Option<Vec<usize>>,
     pending_delete: Option<Vec<usize>>,
+    deleting: Option<DeleteHandle>,
     info: Option<Vec<usize>>,
     /// Last status message; the flag is true for errors.
     message: Option<(bool, String)>,
@@ -162,6 +176,7 @@ impl App {
             sort_desc: true,
             pending_trash: None,
             pending_delete: None,
+            deleting: None,
             info: None,
             message: None,
             logs: Arc::new(Mutex::new(Vec::new())),
@@ -440,6 +455,7 @@ impl App {
     fn modal_open(&self) -> bool {
         self.pending_trash.is_some()
             || self.pending_delete.is_some()
+            || self.deleting.is_some()
             || self.info.is_some()
             || self.show_about
     }
@@ -517,11 +533,142 @@ impl App {
         if confirmed {
             self.pending_trash = None;
             self.pending_delete = None;
-            self.remove(&path, permanent);
+            if permanent {
+                self.start_permanent_delete(&path, ctx);
+            } else {
+                self.remove(&path);
+            }
         } else if modal.should_close() {
             self.pending_trash = None;
             self.pending_delete = None;
         }
+    }
+
+    fn start_permanent_delete(&mut self, path: &[usize], ctx: &egui::Context) {
+        let Some(root) = &self.root else { return };
+        let target = root.path_of(&self.root_path, path);
+        let Some(name) = root.get(path).map(|node| node.name.clone()) else {
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let current_path = Arc::new(Mutex::new(target.clone()));
+        let worker_current_path = current_path.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
+        let ctx = ctx.clone();
+        let worker = std::thread::Builder::new()
+            .name("permanent-delete".to_owned())
+            .spawn(move || {
+                let result = match delete_permanently(&target, &worker_cancel, |path| {
+                    *worker_current_path.lock().unwrap() = path.to_path_buf();
+                    ctx.request_repaint();
+                }) {
+                    Ok(()) => Ok(()),
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::Interrupted
+                            && worker_cancel.load(Ordering::Relaxed) =>
+                    {
+                        Err(DeleteOutcome::Cancelled)
+                    }
+                    Err(error) => Err(DeleteOutcome::Failed(error.to_string())),
+                };
+                let _ = tx.send(result);
+                ctx.request_repaint();
+            });
+        match worker {
+            Ok(_) => {
+                self.deleting = Some(DeleteHandle {
+                    path: path.to_vec(),
+                    name,
+                    current_path,
+                    cancel,
+                    rx,
+                })
+            }
+            Err(error) => {
+                let message = trf(self.lang, Key::DeleteFailed, &[&error.to_string()]);
+                self.record_activity(message.clone());
+                self.message = Some((true, message));
+            }
+        }
+    }
+
+    fn poll_delete(&mut self) {
+        let result = match self
+            .deleting
+            .as_ref()
+            .map(|deleting| deleting.rx.try_recv())
+        {
+            Some(Ok(result)) => Some(result),
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => Some(Err(
+                DeleteOutcome::Failed("delete worker stopped before returning a result".to_owned()),
+            )),
+            Some(Err(std::sync::mpsc::TryRecvError::Empty)) | None => None,
+        };
+        let Some(result) = result else {
+            return;
+        };
+        let Some(deleting) = self.deleting.take() else {
+            return;
+        };
+        match result {
+            Ok(()) => self.finish_remove(&deleting.path, deleting.name, true),
+            Err(DeleteOutcome::Cancelled) => {
+                let message = tr(self.lang, Key::DeleteCancelled).to_owned();
+                self.record_activity(message.clone());
+                self.message = Some((true, message));
+            }
+            Err(DeleteOutcome::Failed(error)) => {
+                let message = trf(self.lang, Key::DeleteFailed, &[&error]);
+                self.record_activity(message.clone());
+                self.message = Some((true, message));
+            }
+        }
+    }
+
+    fn deleting_dialog(&self, ctx: &egui::Context) {
+        let Some(deleting) = &self.deleting else {
+            return;
+        };
+        let message = tr(self.lang, Key::DeleteInProgress);
+        let current_item = trf(
+            self.lang,
+            Key::DeleteCurrentItem,
+            &[&deleting.current_path.lock().unwrap().display().to_string()],
+        );
+        let cancel_requested = deleting.cancel.load(Ordering::Relaxed);
+        egui::Modal::new(egui::Id::unique("deleting_modal")).show(ctx, |ui| {
+            ui.set_width(640.0);
+            ui.with_layout(
+                egui::Layout::top_down(egui::Align::Center)
+                    .with_main_align(egui::Align::Center),
+                |ui| {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(if cancel_requested {
+                        tr(self.lang, Key::DeleteStopping)
+                    } else {
+                        message
+                    });
+                });
+                ui.add_space(12.0);
+                egui::ScrollArea::horizontal()
+                    .max_height(36.0)
+                    .show(ui, |ui| ui.add(egui::Label::new(current_item).extend()));
+                ui.add_space(12.0);
+                if ui
+                    .add_enabled(
+                        !cancel_requested,
+                        egui::Button::new(tr(self.lang, Key::Cancel)),
+                    )
+                    .clicked()
+                {
+                    deleting.cancel.store(true, Ordering::Relaxed);
+                    ctx.request_repaint();
+                }
+                },
+            );
+        });
     }
 
     fn info_dialog(&mut self, ctx: &egui::Context) {
@@ -596,28 +743,31 @@ impl App {
         }
     }
 
-    fn remove(&mut self, path: &[usize], permanent: bool) {
+    fn remove(&mut self, path: &[usize]) {
         let Some(root) = &mut self.root else { return };
         let target = root.path_of(&self.root_path, path);
         let name = root.get(path).map(|n| n.name.clone()).unwrap_or_default();
-        let result = if permanent {
-            delete_permanently(&target).map_err(|e| e.to_string())
-        } else {
-            trash::delete(&target).map_err(|e| e.to_string())
-        };
-        if let Err(e) = result {
-            let key = if permanent { Key::DeleteFailed } else { Key::TrashFailed };
-            let message = trf(self.lang, key, &[&e]);
+        if let Err(error) = trash::delete(&target) {
+            let message = trf(self.lang, Key::TrashFailed, &[&error.to_string()]);
             self.record_activity(message.clone());
             self.message = Some((true, message));
             return;
         }
 
+        self.finish_remove(path, name, false);
+    }
+
+    fn finish_remove(&mut self, path: &[usize], name: String, permanent: bool) {
+        let Some(root) = &mut self.root else { return };
         // Removing a node re-sorts its ancestors, so index paths are rebuilt from filesystem paths.
         let root_path = &self.root_path;
         let view_path = root.path_of(root_path, &self.view);
         let selected = self.selected.as_ref().map(|s| root.path_of(root_path, s));
-        let expanded: Vec<PathBuf> = self.expanded.iter().map(|e| root.path_of(root_path, e)).collect();
+        let expanded: Vec<PathBuf> = self
+            .expanded
+            .iter()
+            .map(|e| root.path_of(root_path, e))
+            .collect();
 
         root.remove(path);
 
@@ -635,7 +785,11 @@ impl App {
             .iter()
             .filter_map(|e| root.resolve(root_path, e))
             .collect();
-        let key = if permanent { Key::Deleted } else { Key::Trashed };
+        let key = if permanent {
+            Key::Deleted
+        } else {
+            Key::Trashed
+        };
         let message = trf(self.lang, key, &[&name]);
         self.record_activity(message.clone());
         self.message = Some((false, message));
@@ -1274,9 +1428,11 @@ impl App {
         self.root_ctx = Some(ui.ctx().clone());
         self.poll_update_check();
         self.poll_scan();
+        self.poll_delete();
         self.monitor_scan();
-        if self.scan.is_some() {
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+        if self.scan.is_some() || self.deleting.is_some() {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
         }
         let (go_up, delete) = ui.input(|i| {
             let cmd_backspace = i.modifiers.command && i.key_pressed(egui::Key::Backspace);
@@ -1379,6 +1535,7 @@ impl App {
         CentralPanel::default().show(ui, |ui| self.chart_panel(ui));
         self.removal_dialog(ui.ctx(), false);
         self.removal_dialog(ui.ctx(), true);
+        self.deleting_dialog(ui.ctx());
         self.info_dialog(ui.ctx());
     }
 }
@@ -1755,6 +1912,118 @@ mod tests {
         assert_eq!(logs.len(), 1);
         assert!(logs[0].text.contains("No progress"));
         assert!(logs[0].text.contains("Reading folder: /slow-folder"));
+    }
+
+    #[test]
+    fn permanent_delete_runs_in_background_and_updates_the_tree_when_done() {
+        let dir = std::env::temp_dir().join(format!(
+            "rs-da-delete-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let target = dir.join("victim.bin");
+        std::fs::write(&target, b"test").unwrap();
+
+        let mut app = App::empty(Lang::En, Vec::new());
+        app.root_path = dir.clone();
+        app.root = Some(Node {
+            name: dir.file_name().unwrap().to_string_lossy().into_owned(),
+            size: 4,
+            items: 1,
+            modified: None,
+            is_dir: true,
+            children: vec![Node {
+                name: "victim.bin".to_owned(),
+                size: 4,
+                items: 1,
+                modified: None,
+                is_dir: false,
+                children: Vec::new(),
+            }],
+        });
+
+        app.start_permanent_delete(&[0], &egui::Context::default());
+        assert!(app.deleting.is_some());
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.deleting.is_some() && std::time::Instant::now() < deadline {
+            app.poll_delete();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        assert!(app.deleting.is_none());
+        assert!(!target.exists());
+        assert!(app.root.as_ref().unwrap().children.is_empty());
+        std::fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn deleting_modal_shows_that_permanent_deletion_is_in_progress() {
+        let mut app = App::empty(Lang::En, Vec::new());
+        app.root = Some(sample_root());
+        let (_tx, rx) = std::sync::mpsc::channel();
+        app.deleting = Some(DeleteHandle {
+            path: vec![0],
+            name: "big.bin".to_owned(),
+            current_path: Arc::new(Mutex::new(PathBuf::from("/data/big.bin"))),
+            cancel: Arc::new(AtomicBool::new(false)),
+            rx,
+        });
+        let mut harness = Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1100.0, 700.0))
+            .build_ui_state(|ui, app: &mut App| app.show(ui), app);
+
+        harness.step();
+
+        harness.get_by_label("Deleting permanently… This may take a while.");
+        harness.get_by_label("Current item: /data/big.bin");
+        let cancel_button_top = harness.get_by_label("Cancel").rect().top();
+        *harness
+            .state()
+            .deleting
+            .as_ref()
+            .unwrap()
+            .current_path
+            .lock()
+            .unwrap() = PathBuf::from(format!("/data/{}", "directory with a long name/".repeat(20)));
+        harness.step();
+        assert_eq!(
+            harness.get_by_label("Cancel").rect().top(),
+            cancel_button_top
+        );
+        harness.get_by_label("Cancel").click();
+        harness.step();
+        harness.step();
+        assert!(
+            harness.state().deleting.as_ref().unwrap().cancel.load(Ordering::Relaxed)
+        );
+        harness.get_by_label("Stopping after the current filesystem operation…");
+    }
+
+    #[test]
+    fn cancelled_delete_keeps_the_tree_and_warns_that_it_may_be_stale() {
+        let mut app = App::empty(Lang::En, Vec::new());
+        app.root = Some(sample_root());
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Err(DeleteOutcome::Cancelled)).unwrap();
+        app.deleting = Some(DeleteHandle {
+            path: vec![0],
+            name: "big.bin".to_owned(),
+            current_path: Arc::new(Mutex::new(PathBuf::from("/data/big.bin"))),
+            cancel: Arc::new(AtomicBool::new(true)),
+            rx,
+        });
+
+        app.poll_delete();
+
+        assert!(app.deleting.is_none());
+        assert_eq!(app.root.as_ref().unwrap().children.len(), 2);
+        assert!(app.message.as_ref().unwrap().1.contains("rescan"));
     }
 
     #[test]

@@ -4,6 +4,7 @@ version = "0.1.4"
 edition = "2024"
 
 [dependencies]
+cap-std = "4.0.3"
 dirs = "7.0.0"
 eframe = { version = "0.37.0", features = ["persistence"] }
 egui = "0.37"
