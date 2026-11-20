@@ -19,6 +19,18 @@ const MAX_RECENT: usize = 5;
 const MAX_LOG_ENTRIES: usize = 500;
 const SCAN_STALL_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
 const REPO_URL: &str = "https://github.com/LaurentHouel/rs-DiskAnalyzer";
+const DEPENDENCIES: [&str; 10] = [
+    "dirs",
+    "eframe",
+    "egui",
+    "rayon",
+    "rfd",
+    "semver",
+    "serde_json",
+    "sysinfo",
+    "trash",
+    "ureq",
+];
 const CARD_W: f32 = 250.0;
 const CARD_H: f32 = 84.0;
 const CARD_GAP: f32 = 10.0;
@@ -105,6 +117,7 @@ pub struct App {
     col_widths: [f32; 3],
     dark: bool,
     logo: Option<egui::TextureHandle>,
+    show_about: bool,
 }
 
 impl App {
@@ -163,6 +176,7 @@ impl App {
             col_widths: DEFAULT_COLS,
             dark: true,
             logo: None,
+            show_about: false,
         }
     }
 
@@ -424,7 +438,42 @@ impl App {
     }
 
     fn modal_open(&self) -> bool {
-        self.pending_trash.is_some() || self.pending_delete.is_some() || self.info.is_some()
+        self.pending_trash.is_some()
+            || self.pending_delete.is_some()
+            || self.info.is_some()
+            || self.show_about
+    }
+
+    fn about_dialog(&mut self, ctx: &egui::Context) {
+        if !self.show_about {
+            return;
+        }
+        let lang = self.lang;
+        let modal = egui::Modal::new(egui::Id::unique("about_modal")).show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.heading(tr(lang, Key::About));
+            ui.label(format!("Disk Analyzer v{}", env!("CARGO_PKG_VERSION")));
+            ui.add_space(8.0);
+            ui.label(tr(lang, Key::AboutLibraries));
+            ui.add_space(4.0);
+            egui::ScrollArea::vertical()
+                .max_height(280.0)
+                .show(ui, |ui| {
+                    for dependency in DEPENDENCIES {
+                        ui.hyperlink_to(
+                            dependency,
+                            format!("https://crates.io/crates/{dependency}"),
+                        );
+                    }
+                });
+            ui.add_space(8.0);
+            if ui.button(tr(lang, Key::Close)).clicked() {
+                ui.close();
+            }
+        });
+        if modal.should_close() {
+            self.show_about = false;
+        }
     }
 
     /// Confirmation for moving to the trash, or for deleting permanently when `permanent`.
@@ -855,6 +904,15 @@ impl App {
                     theme::apply(&ctx, self.dark);
                 }
 
+                let about =
+                    Btn::icon(Icon::Info, tr(lang, Key::AboutTip)).with_text(tr(lang, Key::About));
+                if tool_button(ui, &pal, true, about)
+                    .on_hover_text(tr(lang, Key::AboutTip))
+                    .clicked()
+                {
+                    self.show_about = true;
+                }
+
                 let logs = Btn::icon(Icon::Logs, tr(lang, Key::LogsTip)).with_text(tr(lang, Key::Logs));
                 if tool_button(ui, &pal, true, logs)
                     .on_hover_text(tr(lang, Key::LogsTip))
@@ -1276,6 +1334,7 @@ impl App {
         }
 
         self.show_logs_window(ui.ctx());
+        self.about_dialog(ui.ctx());
 
         if self.scan.is_some() || self.root.is_none() {
             let mut cancelled = false;
@@ -1633,6 +1692,24 @@ mod tests {
         assert!(harness.state().show_logs.load(Ordering::Relaxed));
         assert!(harness.query_all_by_label("Activity logs").count() > 0);
         harness.get_by_label("Test scan completed");
+    }
+
+    #[test]
+    fn about_button_lists_application_libraries_on_the_welcome_screen() {
+        let app = App::empty(Lang::En, Vec::new());
+        let mut harness = Harness::builder()
+            .allow_missing_glyphs()
+            .with_size(egui::vec2(1100.0, 700.0))
+            .build_ui_state(|ui, app: &mut App| app.show(ui), app);
+        harness.run();
+
+        harness.get_by_label("Show application information and libraries").click();
+        harness.run();
+
+        assert!(harness.state().show_about);
+        harness.get_by_label("Libraries used in this application");
+        harness.get_by_label("eframe");
+        harness.get_by_label("ureq");
     }
 
     #[test]
