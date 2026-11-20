@@ -464,9 +464,9 @@ impl App {
             egui::ScrollArea::vertical()
                 .max_height(280.0)
                 .show(ui, |ui| {
-                    for dependency in DEPENDENCIES {
+                    for (dependency, version) in DEPENDENCIES {
                         ui.hyperlink_to(
-                            dependency,
+                            format!("{dependency} {version}"),
                             format!("https://crates.io/crates/{dependency}"),
                         );
                     }
@@ -1854,9 +1854,9 @@ mod tests {
 
         assert!(harness.state().show_about);
         harness.get_by_label("Libraries used in this application");
-        harness.get_by_label("cap-std");
-        harness.get_by_label("eframe");
-        harness.get_by_label("ureq");
+        harness.get_by_label_contains("cap-std ");
+        harness.get_by_label_contains("eframe ");
+        harness.get_by_label_contains("ureq ");
     }
 
     #[test]
