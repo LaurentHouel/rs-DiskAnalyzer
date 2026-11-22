@@ -29,16 +29,41 @@ struct Grid {
 }
 
 impl Grid {
+    /// Converts one design-grid point to a screen-space position.
+    ///
+    /// # Parameters
+    /// - `self`: Grid origin and scale.
+    /// - `x`: Horizontal coordinate in the 24-by-24 design grid.
+    /// - `y`: Vertical coordinate in the 24-by-24 design grid.
+    ///
+    /// # Returns
+    /// The corresponding screen-space point.
     fn pt(&self, x: f32, y: f32) -> Pos2 {
         self.origin + vec2(x, y) * self.scale
     }
 
+    /// Converts a sequence of design-grid points to screen-space positions.
+    ///
+    /// # Parameters
+    /// - `self`: Grid origin and scale.
+    /// - `points`: Design-grid coordinates to transform.
+    ///
+    /// # Returns
+    /// Transformed points in their original order.
     fn pts(&self, points: &[(f32, f32)]) -> Vec<Pos2> {
         points.iter().map(|&(x, y)| self.pt(x, y)).collect()
     }
 }
 
 /// Polyline whose corners are rounded with quadratic curves of the given radius (in grid units).
+///
+/// # Parameters
+/// - `points`: Vertices of the polyline.
+/// - `radius`: Maximum corner-rounding radius in grid units.
+/// - `closed`: Whether the final point connects to the first point.
+///
+/// # Returns
+/// Sampled points forming the rounded polyline.
 fn rounded(points: &[(f32, f32)], radius: f32, closed: bool) -> Vec<(f32, f32)> {
     let n = points.len();
     let mut out = Vec::new();
@@ -68,6 +93,15 @@ fn rounded(points: &[(f32, f32)], radius: f32, closed: bool) -> Vec<(f32, f32)> 
     out
 }
 
+/// Samples a circular arc between two angles in the icon design grid.
+///
+/// # Parameters
+/// - `cx`, `cy`: Center of the arc.
+/// - `r`: Arc radius.
+/// - `from`, `to`: Start and end angles in radians.
+///
+/// # Returns
+/// Ordered points approximating the arc, including both endpoints.
 fn arc(cx: f32, cy: f32, r: f32, from: f32, to: f32) -> Vec<(f32, f32)> {
     let steps = ((to - from).abs() / 0.12).ceil().max(2.0) as usize;
     (0..=steps)
@@ -78,6 +112,16 @@ fn arc(cx: f32, cy: f32, r: f32, from: f32, to: f32) -> Vec<(f32, f32)> {
         .collect()
 }
 
+/// Draws the requested vector icon into a rectangle using the supplied stroke color.
+///
+/// # Parameters
+/// - `p`: Painter used to render the icon.
+/// - `icon`: Icon shape to draw.
+/// - `rect`: Target bounds; its width sets the icon's design-grid scale.
+/// - `color`: Stroke and fill color.
+///
+/// # Returns
+/// Nothing; adds drawing shapes to `p`.
 pub fn paint(p: &Painter, icon: Icon, rect: Rect, color: Color32) {
     let g = Grid { origin: rect.min, scale: rect.width() / 24.0 };
     let stroke = Stroke::new((2.0 * g.scale).max(1.2), color);

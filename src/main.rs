@@ -15,6 +15,12 @@ mod widgets;
 
 /// Some Windows Vulkan drivers (e.g. old Intel ones) crash while the device is created, so
 /// Direct3D 12 is used unless the user picked a backend through `WGPU_BACKEND`.
+///
+/// # Parameters
+/// - `options`: Native window and renderer settings to update.
+///
+/// # Returns
+/// Nothing; sets the renderer backend to Direct3D 12 when no backend override is present.
 #[cfg(target_os = "windows")]
 fn prefer_dx12_on_windows(options: &mut eframe::NativeOptions) {
     if std::env::var_os("WGPU_BACKEND").is_some() {
@@ -26,8 +32,22 @@ fn prefer_dx12_on_windows(options: &mut eframe::NativeOptions) {
 }
 
 #[cfg(not(target_os = "windows"))]
+/// Does nothing on platforms where the Windows renderer override is not applicable.
+///
+/// # Parameters
+/// - `_options`: Native window and renderer settings, unused on non-Windows platforms.
+///
+/// # Returns
+/// Nothing.
 fn prefer_dx12_on_windows(_options: &mut eframe::NativeOptions) {}
 
+/// Parses supported launch arguments, configures the native window, and starts the application.
+///
+/// # Parameters
+/// None; reads process arguments and embedded application assets.
+///
+/// # Returns
+/// The result of starting the eframe application, including any startup error.
 fn main() -> eframe::Result {
     // The app never scans on its own. Only the explicit `--scan <folder>` option (debugging aid)
     // starts a scan at launch; any other argument, e.g. added by the OS, is ignored.

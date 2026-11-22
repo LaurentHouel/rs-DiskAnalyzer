@@ -22,6 +22,15 @@ pub struct ChartCtx<'a> {
     pub selected: Option<&'a [usize]>,
 }
 
+/// Displays the name, filesystem path, size, item count, and modification age of a chart node.
+///
+/// # Parameters
+/// - `ui`: UI in which to render the tooltip.
+/// - `cx`: Chart data and localization context.
+/// - `path`: Index path of the node relative to the scanned root.
+///
+/// # Returns
+/// Nothing; does nothing when `path` does not identify a node.
 pub fn tooltip(ui: &mut Ui, cx: &ChartCtx, path: &[usize]) {
     let Some(node) = cx.root.get(path) else {
         return;
@@ -44,6 +53,13 @@ pub fn tooltip(ui: &mut Ui, cx: &ChartCtx, path: &[usize]) {
     ));
 }
 
+/// Chooses a readable dark or light text color based on the background luminance.
+///
+/// # Parameters
+/// - `bg`: Background color on which the text will be drawn.
+///
+/// # Returns
+/// Near-black text for a light background, or white text for a dark background.
 pub fn text_color_on(bg: Color32) -> Color32 {
     let lum = 0.299 * bg.r() as f32 + 0.587 * bg.g() as f32 + 0.114 * bg.b() as f32;
     if lum > 150.0 {
@@ -55,6 +71,15 @@ pub fn text_color_on(bg: Color32) -> Color32 {
 
 /// Right-click menu for the chart item under the pointer when the click happened.
 /// The target is remembered so the menu keeps working while the pointer moves over it.
+///
+/// # Parameters
+/// - `ui`: UI context used to retain the target and render the menu.
+/// - `resp`: Chart interaction response that owns the context menu.
+/// - `cx`: Chart tree, path, and localization context.
+/// - `hovered`: Index path of the item currently under the pointer, if any.
+///
+/// # Returns
+/// The selected chart action, or `None` when no menu action was chosen.
 pub fn item_menu(
     ui: &Ui,
     resp: &Response,

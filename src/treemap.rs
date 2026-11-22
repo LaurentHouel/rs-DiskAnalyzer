@@ -17,6 +17,13 @@ struct Cell<'a> {
 }
 
 /// Squarified treemap layout (Bruls et al.). `sizes` must be sorted in decreasing order.
+///
+/// # Parameters
+/// - `sizes`: Non-negative item areas in decreasing order.
+/// - `rect`: Rectangle to tile.
+///
+/// # Returns
+/// One rectangle per input size, or an empty vector for invalid or empty bounds.
 fn squarify(sizes: &[f64], rect: Rect) -> Vec<Rect> {
     let total: f64 = sizes.iter().sum();
     let (mut x, mut y) = (rect.min.x as f64, rect.min.y as f64);
@@ -77,6 +84,17 @@ fn squarify(sizes: &[f64], rect: Rect) -> Vec<Rect> {
     out
 }
 
+/// Recursively lays out visible child nodes as treemap cells.
+///
+/// # Parameters
+/// - `node`: Directory whose children should be laid out.
+/// - `rect`: Available rectangle for this directory's contents.
+/// - `path`: Mutable index path extended during recursive traversal.
+/// - `depth`: Nesting depth used for directory coloring.
+/// - `cells`: Output collection receiving each visible cell.
+///
+/// # Returns
+/// Nothing; appends cells and nested directory contents to `cells`.
 fn layout<'a>(
     node: &'a Node,
     rect: Rect,
@@ -119,6 +137,13 @@ fn layout<'a>(
     }
 }
 
+/// Selects a display color based on a file's extension.
+///
+/// # Parameters
+/// - `name`: File name whose final extension is inspected.
+///
+/// # Returns
+/// A category color, or the neutral fallback color for unknown extensions.
 fn extension_color(name: &str) -> Color32 {
     let ext = name
         .rsplit_once('.')
@@ -148,11 +173,25 @@ fn extension_color(name: &str) -> Color32 {
     }
 }
 
+/// Lightens each RGB channel by a fixed amount for hover highlighting.
+///
+/// # Parameters
+/// - `c`: Original color.
+///
+/// # Returns
+/// A brighter color with channel values saturated at 255.
 fn lighten(c: Color32) -> Color32 {
     let up = |v: u8| v.saturating_add(28);
     Color32::from_rgb(up(c.r()), up(c.g()), up(c.b()))
 }
 
+/// Alternates between two directory colors according to nesting depth.
+///
+/// # Parameters
+/// - `depth`: Directory nesting depth.
+///
+/// # Returns
+/// The color assigned to that depth.
 fn dir_color(depth: usize) -> Color32 {
     if depth % 2 == 0 {
         Color32::from_rgb(69, 103, 166)
@@ -161,6 +200,14 @@ fn dir_color(depth: usize) -> Color32 {
     }
 }
 
+/// Renders the treemap and converts pointer gestures into chart actions.
+///
+/// # Parameters
+/// - `ui`: UI in which to render and receive input.
+/// - `cx`: Tree, selection, and localization context for the chart.
+///
+/// # Returns
+/// The action triggered by the pointer, or `None` when no action applies.
 pub fn show(ui: &mut Ui, cx: &ChartCtx) -> Option<ChartAction> {
     let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click());
     let bg = ui.visuals().extreme_bg_color;
@@ -267,6 +314,13 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Verifies that squarified cells cover the target rectangle in proportion to their sizes.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if coverage, area ratios, or bounds are incorrect.
     fn squarify_tiles_the_whole_rect_proportionally() {
         let rect = Rect::from_min_size(Pos2::new(10.0, 20.0), vec2(400.0, 300.0));
         let sizes = [50.0, 25.0, 15.0, 7.0, 3.0];

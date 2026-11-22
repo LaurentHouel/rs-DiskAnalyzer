@@ -11,6 +11,13 @@ pub struct Release {
 
 pub type CheckResult = Result<Option<Release>, String>;
 
+/// Starts a background GitHub release check and returns its result channel.
+///
+/// # Parameters
+/// - `ctx`: egui context to request a repaint after the check completes.
+///
+/// # Returns
+/// A receiver that yields the release-check result once available.
 pub fn start_check(ctx: egui::Context) -> Receiver<CheckResult> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -21,6 +28,13 @@ pub fn start_check(ctx: egui::Context) -> Receiver<CheckResult> {
     rx
 }
 
+/// Fetches the latest GitHub release and compares it with the running application version.
+///
+/// # Parameters
+/// None.
+///
+/// # Returns
+/// A newer release when available, `None` when current, or an error describing the failed check.
 fn check_for_update() -> CheckResult {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(5))
@@ -57,6 +71,13 @@ fn check_for_update() -> CheckResult {
     }
 }
 
+/// Parses a release tag as a semantic version, accepting an optional leading `v`.
+///
+/// # Parameters
+/// - `tag`: Version tag returned by the release service.
+///
+/// # Returns
+/// The parsed semantic version, or a descriptive parsing error.
 fn parse_release_version(tag: &str) -> Result<Version, String> {
     Version::parse(tag.strip_prefix('v').unwrap_or(tag))
         .map_err(|err| format!("Invalid release version {tag:?}: {err}"))
@@ -67,6 +88,13 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Verifies that release tags with and without a `v` prefix compare semantically.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if parsing or version ordering is incorrect.
     fn compares_release_tags_semantically() {
         let current = Version::parse("0.1.3").unwrap();
         assert!(parse_release_version("v0.1.4").unwrap() > current);

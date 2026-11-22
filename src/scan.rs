@@ -20,6 +20,14 @@ pub struct Node {
 }
 
 impl Node {
+    /// Looks up a descendant by following child indices from this node.
+    ///
+    /// # Parameters
+    /// - `self`: Root node from which traversal begins.
+    /// - `path`: Sequence of child indices to follow.
+    ///
+    /// # Returns
+    /// The referenced node, or `None` if any index is out of bounds.
     pub fn get(&self, path: &[usize]) -> Option<&Node> {
         let mut node = self;
         for &i in path {
@@ -29,6 +37,13 @@ impl Node {
     }
 
     /// Removes the node reached through `path` and updates sizes and order of its ancestors.
+    ///
+    /// # Parameters
+    /// - `self`: Root node whose tree is updated.
+    /// - `path`: Sequence of child indices locating the node to remove.
+    ///
+    /// # Returns
+    /// `Some(())` when a non-root node is removed, or `None` for an empty or invalid path.
     pub fn remove(&mut self, path: &[usize]) -> Option<()> {
         let (&first, rest) = path.split_first()?;
         let (size, items) = if rest.is_empty() {
@@ -50,6 +65,14 @@ impl Node {
     }
 
     /// Inverse of [`Node::path_of`]: finds the index path of a filesystem path.
+    ///
+    /// # Parameters
+    /// - `self`: Scanned root node.
+    /// - `root_path`: Filesystem path corresponding to the scanned root.
+    /// - `target`: Filesystem path to resolve.
+    ///
+    /// # Returns
+    /// Child indices locating `target`, or `None` when it is outside the root or absent.
     pub fn resolve(&self, root_path: &Path, target: &Path) -> Option<Vec<usize>> {
         let rel = target.strip_prefix(root_path).ok()?;
         let mut node = self;
@@ -64,6 +87,14 @@ impl Node {
     }
 
     /// Filesystem path of the node reached through `path`, given the scanned root's path.
+    ///
+    /// # Parameters
+    /// - `self`: Scanned root node.
+    /// - `root_path`: Filesystem path corresponding to the scanned root.
+    /// - `path`: Sequence of child indices to resolve.
+    ///
+    /// # Returns
+    /// The filesystem path assembled from valid indices; traversal stops at the first invalid index.
     pub fn path_of(&self, root_path: &Path, path: &[usize]) -> PathBuf {
         let mut out = root_path.to_path_buf();
         let mut node = self;
@@ -102,15 +133,39 @@ pub struct Progress {
 }
 
 impl Progress {
+    /// Publishes the current scan activity and the path being processed.
+    ///
+    /// # Parameters
+    /// - `self`: Shared scan progress state.
+    /// - `kind`: Activity category to publish.
+    /// - `path`: Filesystem path currently being processed.
+    ///
+    /// # Returns
+    /// Nothing; updates the shared path and activity kind.
     pub(crate) fn set_activity(&self, kind: ScanActivityKind, path: &Path) {
         *self.activity_path.lock().unwrap() = path.to_path_buf();
         self.activity_kind.store(kind as u8, Ordering::Release);
     }
 
+    /// Updates the activity category while keeping the current path unchanged.
+    ///
+    /// # Parameters
+    /// - `self`: Shared scan progress state.
+    /// - `kind`: Activity category to publish.
+    ///
+    /// # Returns
+    /// Nothing; stores the activity kind atomically.
     fn set_activity_kind(&self, kind: ScanActivityKind) {
         self.activity_kind.store(kind as u8, Ordering::Release);
     }
 
+    /// Reads a consistent activity kind and path snapshot for progress reporting.
+    ///
+    /// # Parameters
+    /// - `self`: Shared scan progress state.
+    ///
+    /// # Returns
+    /// A snapshot of the current activity category and path.
     pub(crate) fn activity(&self) -> ScanActivity {
         let kind = match self.activity_kind.load(Ordering::Acquire) {
             0 => ScanActivityKind::CheckingRoot,
@@ -139,6 +194,14 @@ struct Shared {
     root_dev: u64,
 }
 
+/// Starts an asynchronous filesystem scan and returns its progress and result handles.
+///
+/// # Parameters
+/// - `path`: File or directory to scan.
+/// - `ctx`: egui context to repaint when the scan completes.
+///
+/// # Returns
+/// A handle containing cancellation, progress, completion receiver, and start time.
 pub fn start(path: PathBuf, ctx: egui::Context) -> ScanHandle {
     let progress = Arc::new(Progress::default());
     let cancel = Arc::new(AtomicBool::new(false));
@@ -184,6 +247,16 @@ pub fn start(path: PathBuf, ctx: egui::Context) -> ScanHandle {
     handle
 }
 
+/// Recursively scans a directory, collecting children and aggregate size and item counts.
+///
+/// # Parameters
+/// - `path`: Directory to read.
+/// - `name`: Name stored for this directory in the scan tree.
+/// - `meta`: Metadata already read for this directory.
+/// - `shared`: Cancellation, progress, and filesystem-deduplication state shared by the scan.
+///
+/// # Returns
+/// A directory node containing its successfully scanned descendants.
 fn scan_dir(path: &Path, name: String, meta: &Metadata, shared: &Shared) -> Node {
     shared.progress.dirs.fetch_add(1, Ordering::Relaxed);
     shared.progress.set_activity(ScanActivityKind::ReadingDirectory, path);
@@ -240,10 +313,25 @@ fn scan_dir(path: &Path, name: String, meta: &Metadata, shared: &Shared) -> Node
 }
 
 /// Canonical order: decreasing size. Charts and index paths rely on it.
+///
+/// # Parameters
+/// - `children`: Child nodes to sort in place.
+///
+/// # Returns
+/// Nothing; orders nodes by decreasing size, then by name.
 fn sort_children(children: &mut [Node]) {
     children.sort_unstable_by(|a, b| b.size.cmp(&a.size).then_with(|| a.name.cmp(&b.name)));
 }
 
+/// Creates a file node and updates the shared file and byte counters.
+///
+/// # Parameters
+/// - `name`: File name stored in the scan tree.
+/// - `meta`: Filesystem metadata used to calculate size and modification time.
+/// - `shared`: Scan state whose progress counters are updated.
+///
+/// # Returns
+/// A leaf node representing the file.
 fn file_node(name: String, meta: &Metadata, shared: &Shared) -> Node {
     let size = disk_size(meta, shared);
     shared.progress.files.fetch_add(1, Ordering::Relaxed);
@@ -260,22 +348,49 @@ fn file_node(name: String, meta: &Metadata, shared: &Shared) -> Node {
 
 /// On macOS the data volume is reachable twice: through the firmlinks (/Users, /Applications…)
 /// and under /System/Volumes, on the same device id. Counting both doubles the totals.
+///
+/// # Parameters
+/// - `path`: Directory path to check.
+///
+/// # Returns
+/// `true` when the path is the mirrored macOS system-volume mount.
 fn is_mirrored_mount(path: &Path) -> bool {
     cfg!(target_os = "macos") && path == Path::new("/System/Volumes")
 }
 
 #[cfg(unix)]
+/// Reads the Unix device identifier from filesystem metadata.
+///
+/// # Parameters
+/// - `meta`: Metadata whose device identifier is requested.
+///
+/// # Returns
+/// The device identifier.
 fn device_id(meta: &Metadata) -> u64 {
     std::os::unix::fs::MetadataExt::dev(meta)
 }
 
 #[cfg(not(unix))]
+/// Supplies a placeholder device identifier on platforms without Unix metadata extensions.
+///
+/// # Parameters
+/// - `_meta`: Filesystem metadata, unused on non-Unix platforms.
+///
+/// # Returns
+/// Zero, since device identifiers are not used by the non-Unix scanner.
 fn device_id(_meta: &Metadata) -> u64 {
     0
 }
 
 /// Space actually used on disk; hard-linked files are only counted once.
 #[cfg(unix)]
+///
+/// # Parameters
+/// - `meta`: Filesystem metadata for the file or directory.
+/// - `shared`: Scan state containing the set of already-counted file inodes.
+///
+/// # Returns
+/// Allocated bytes on disk, or zero for a hard link already counted.
 fn disk_size(meta: &Metadata, shared: &Shared) -> u64 {
     use std::os::unix::fs::MetadataExt;
     if !meta.is_dir() && meta.nlink() > 1 {
@@ -288,6 +403,14 @@ fn disk_size(meta: &Metadata, shared: &Shared) -> u64 {
 }
 
 #[cfg(not(unix))]
+/// Gets file size on platforms without Unix allocated-block metadata.
+///
+/// # Parameters
+/// - `meta`: Filesystem metadata for the file or directory.
+/// - `_shared`: Shared scan state, unused on non-Unix platforms.
+///
+/// # Returns
+/// The logical file length in bytes.
 fn disk_size(meta: &Metadata, _shared: &Shared) -> u64 {
     meta.len()
 }
@@ -297,6 +420,13 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Checks that the macOS mirrored volume is skipped only on macOS.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if mirror detection differs from the platform expectation.
     fn macos_system_volumes_mirror_is_skipped() {
         assert_eq!(
             is_mirrored_mount(Path::new("/System/Volumes")),
@@ -306,6 +436,13 @@ mod tests {
     }
 
     #[test]
+    /// Checks scan sizes, item counts, sorting, path resolution, and node removal.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if the temporary tree is not scanned and updated correctly.
     fn scans_sizes_counts_and_sorts() {
         let dir = std::env::temp_dir().join(format!("da-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);

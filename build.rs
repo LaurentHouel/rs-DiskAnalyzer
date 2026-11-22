@@ -1,6 +1,13 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+/// Registers Cargo rebuild triggers, generates dependency metadata, and embeds the Windows icon.
+///
+/// # Parameters
+/// None; reads Cargo environment variables and project manifest files.
+///
+/// # Returns
+/// Nothing; reports build-script failures through Cargo panics or process output.
 fn main() {
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=Cargo.lock");
@@ -15,6 +22,13 @@ fn main() {
     }
 }
 
+/// Writes the current package's direct, locked dependency versions to Cargo's output directory.
+///
+/// # Parameters
+/// None; reads `Cargo.toml`, `Cargo.lock`, and Cargo-provided environment variables.
+///
+/// # Returns
+/// Nothing; writes `dependencies.rs` or panics when required metadata is invalid or unavailable.
 fn generate_dependencies() {
     let manifest_path = PathBuf::from(
         std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo did not provide CARGO_MANIFEST_DIR"),
@@ -79,6 +93,14 @@ fn generate_dependencies() {
         .expect("failed to write generated dependency list");
 }
 
+/// Adds package names from one Cargo dependency table to the deduplicated output set.
+///
+/// # Parameters
+/// - `value`: TOML value expected to contain a dependency table.
+/// - `dependencies`: Set receiving resolved package names.
+///
+/// # Returns
+/// Nothing; updates `dependencies` in place.
 fn add_dependencies(value: &toml::Value, dependencies: &mut BTreeSet<String>) {
     let table = value
         .as_table()
@@ -93,6 +115,15 @@ fn add_dependencies(value: &toml::Value, dependencies: &mut BTreeSet<String>) {
     }
 }
 
+/// Finds the locked version of a direct dependency in Cargo's lockfile data.
+///
+/// # Parameters
+/// - `dependency`: Package name whose locked version is requested.
+/// - `locked_dependencies`: Dependency entries belonging to the current package.
+/// - `packages`: All package records from `Cargo.lock`.
+///
+/// # Returns
+/// The unique locked version string, or panics when the lockfile has no unique match.
 fn locked_version(
     dependency: &str,
     locked_dependencies: &[toml::Value],
@@ -128,6 +159,13 @@ fn locked_version(
         .to_owned()
 }
 
+/// Extracts the package name from a lockfile dependency entry.
+///
+/// # Parameters
+/// - `entry`: Dependency entry containing a name and optionally version metadata.
+///
+/// # Returns
+/// The portion of `entry` before its first space, or the entire entry when no space exists.
 fn lock_entry_name(entry: &str) -> &str {
     entry.split_once(' ').map_or(entry, |(name, _)| name)
 }

@@ -20,6 +20,13 @@ pub struct Drive {
 }
 
 impl Drive {
+    /// Calculates the used capacity without allowing available space to underflow the total.
+    ///
+    /// # Parameters
+    /// - `self`: Drive whose capacity values are used.
+    ///
+    /// # Returns
+    /// Used space in bytes.
     pub fn used(&self) -> u64 {
         self.total.saturating_sub(self.available)
     }
@@ -45,6 +52,12 @@ const HIDDEN_PREFIXES: [&str; 8] = [
 ];
 
 /// Mounted volumes worth scanning, without system-internal or pseudo filesystems.
+///
+/// # Parameters
+/// None.
+///
+/// # Returns
+/// Detected drives sorted and deduplicated by mount path.
 pub fn list() -> Vec<Drive> {
     let Ok(disks) = Disks::new_with_refreshed_list() else {
         return Vec::new();
@@ -101,11 +114,27 @@ pub fn list() -> Vec<Drive> {
     drives
 }
 
+/// Checks whether a mount path belongs to the system boot volume.
+///
+/// # Parameters
+/// - `mount`: Mount path to classify.
+///
+/// # Returns
+/// `true` for the root or a system volume mount.
 fn is_boot_volume(mount: &str) -> bool {
     mount == "/" || mount.starts_with("/System/Volumes/")
 }
 
 /// Draws a vector icon matching the drive type inside `rect`.
+///
+/// # Parameters
+/// - `painter`: Painter used to render the icon.
+/// - `rect`: Bounds in which to draw the icon.
+/// - `kind`: Drive category that determines the icon design.
+/// - `accent`: Accent color used for status details.
+///
+/// # Returns
+/// Nothing; draws directly to `painter`.
 pub fn paint_icon(painter: &Painter, rect: Rect, kind: DriveKind, accent: Color32) {
     let c = rect.center();
     let w = rect.width();
@@ -202,6 +231,13 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Checks that at least one drive is listed and its capacity values are consistent.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if the drive list or capacity values are invalid.
     fn lists_at_least_one_drive_with_sane_numbers() {
         let drives = list();
         assert!(!drives.is_empty());

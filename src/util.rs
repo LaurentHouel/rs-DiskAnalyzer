@@ -5,6 +5,12 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Opens the system file manager with `path` selected.
+///
+/// # Parameters
+/// - `path`: File or directory to reveal.
+///
+/// # Returns
+/// Nothing; starts the platform-specific file manager process when supported.
 pub fn reveal_in_file_manager(path: &Path) {
     #[cfg(target_os = "macos")]
     let _ = Command::new("open").arg("-R").arg(path).spawn();
@@ -20,6 +26,14 @@ pub fn reveal_in_file_manager(path: &Path) {
 
 /// Removes a file or folder without going through the trash. Symlinks are removed, not followed.
 /// `on_path` is called with each file or directory as it is removed.
+///
+/// # Parameters
+/// - `path`: File or directory to remove.
+/// - `cancel`: Atomic flag checked between filesystem operations.
+/// - `on_path`: Callback invoked with each path as deletion progresses.
+///
+/// # Returns
+/// `Ok(())` when deletion completes, or an I/O error if deletion fails or is cancelled.
 pub fn delete_permanently(
     path: &Path,
     cancel: &AtomicBool,
@@ -36,6 +50,17 @@ pub fn delete_permanently(
     remove_entry(&parent, Path::new(name), path, cancel, &mut on_path)
 }
 
+/// Removes one directory entry, recursively visiting directory contents without following symlinks.
+///
+/// # Parameters
+/// - `parent`: Capability directory containing the entry.
+/// - `name`: Entry name relative to `parent`.
+/// - `display_path`: Full path supplied to the progress callback.
+/// - `cancel`: Atomic cancellation flag checked between operations.
+/// - `on_path`: Callback invoked before entries are removed.
+///
+/// # Returns
+/// `Ok(())` when the entry is removed, or the first I/O or cancellation error.
 fn remove_entry(
     parent: &Dir,
     name: &Path,
@@ -66,6 +91,13 @@ fn remove_entry(
     }
 }
 
+/// Converts a set cancellation flag into an interrupted I/O error.
+///
+/// # Parameters
+/// - `cancel`: Atomic flag indicating whether deletion should stop.
+///
+/// # Returns
+/// `Ok(())` if deletion may continue, otherwise an `Interrupted` error.
 fn check_delete_cancelled(cancel: &AtomicBool) -> std::io::Result<()> {
     if cancel.load(Ordering::Relaxed) {
         Err(std::io::Error::new(
@@ -84,6 +116,13 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
+    /// Checks that progress callbacks include nested files and that the tree is removed.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if progress omits a nested file or deletion is incomplete.
     fn permanent_delete_reports_nested_files_as_it_removes_them() {
         let root = std::env::temp_dir().join(format!(
             "rs-da-delete-progress-{}-{}",
@@ -109,6 +148,13 @@ mod tests {
     }
 
     #[test]
+    /// Checks that deletion stops between filesystem entries after cancellation is requested.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if cancellation is not reported or both files have the same state.
     fn permanent_delete_stops_between_items_when_cancelled() {
         let root = std::env::temp_dir().join(format!(
             "rs-da-delete-cancel-{}-{}",
@@ -143,6 +189,13 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    /// Checks that deleting a symlink removes the link without deleting its target.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if the link target is followed or removed.
     fn permanent_delete_removes_symlinks_without_following_them() {
         let base = std::env::temp_dir().join(format!(
             "rs-da-delete-symlink-{}-{}",

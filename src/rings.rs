@@ -18,6 +18,18 @@ struct Seg<'a> {
     color: Color32,
 }
 
+/// Recursively converts a directory tree into visible, size-proportional ring segments.
+///
+/// # Parameters
+/// - `node`: Directory whose children are being represented.
+/// - `path`: Mutable index path, extended and restored during traversal.
+/// - `level`: Current ring depth.
+/// - `(a0, a1)`: Angular interval assigned to this directory.
+/// - `hue`: Hue inherited by descendants.
+/// - `segs`: Output collection receiving generated segments.
+///
+/// # Returns
+/// Nothing; appends eligible child segments to `segs`.
 fn collect<'a>(
     node: &'a Node,
     path: &mut Vec<usize>,
@@ -59,10 +71,28 @@ fn collect<'a>(
 }
 
 /// Angles start at 12 o'clock and grow clockwise.
+///
+/// # Parameters
+/// - `center`: Center of the ring chart.
+/// - `r`: Distance from the center.
+/// - `a`: Angle in radians.
+///
+/// # Returns
+/// The corresponding point on the circle.
 fn polar(center: Pos2, r: f32, a: f32) -> Pos2 {
     center + vec2((a - FRAC_PI_2).cos(), (a - FRAC_PI_2).sin()) * r
 }
 
+/// Builds a filled annular sector and its outline points.
+///
+/// # Parameters
+/// - `center`: Center of the ring chart.
+/// - `r0`, `r1`: Inner and outer radii.
+/// - `a0`, `a1`: Start and end angles in radians.
+/// - `color`: Fill color for the mesh.
+///
+/// # Returns
+/// The sector mesh and ordered points around its boundary.
 fn sector(center: Pos2, r0: f32, r1: f32, a0: f32, a1: f32, color: Color32) -> (Mesh, Vec<Pos2>) {
     let steps = (((a1 - a0) / 0.04).ceil() as usize).max(1);
     let mut mesh = Mesh::default();
@@ -91,6 +121,14 @@ fn sector(center: Pos2, r0: f32, r1: f32, a0: f32, a1: f32, color: Color32) -> (
     (mesh, inner)
 }
 
+/// Renders the ring chart and translates pointer gestures into chart actions.
+///
+/// # Parameters
+/// - `ui`: UI in which to render and receive input.
+/// - `cx`: Tree, selection, and localization context for the chart.
+///
+/// # Returns
+/// The action triggered by the pointer, or `None` when no action applies.
 pub fn show(ui: &mut Ui, cx: &ChartCtx) -> Option<ChartAction> {
     let (resp, painter) = ui.allocate_painter(ui.available_size(), Sense::click());
     let view = cx.root.get(cx.base)?;

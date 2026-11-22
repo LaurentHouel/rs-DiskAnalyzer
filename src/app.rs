@@ -124,6 +124,14 @@ pub struct App {
 }
 
 impl App {
+    /// Builds application state from persisted preferences and optional launch-time scan input.
+    ///
+    /// # Parameters
+    /// - `cc`: eframe creation context providing storage and the egui context.
+    /// - `start`: Optional path to scan immediately.
+    ///
+    /// # Returns
+    /// An initialized application state, with a release check started in the background.
     pub fn new(cc: &eframe::CreationContext<'_>, start: Option<PathBuf>) -> Self {
         let lang = cc
             .storage
@@ -149,6 +157,14 @@ impl App {
         app
     }
 
+    /// Creates an application state with no active scan or loaded result.
+    ///
+    /// # Parameters
+    /// - `lang`: Initial interface language.
+    /// - `recent`: Previously scanned paths to show on the welcome screen.
+    ///
+    /// # Returns
+    /// A ready-to-use application state with default view, sorting, theme, and column settings.
     fn empty(lang: Lang, recent: Vec<PathBuf>) -> Self {
         Self {
             root: None,
@@ -184,6 +200,15 @@ impl App {
         }
     }
 
+    /// Cancels any current scan, records the chosen path, and starts a replacement scan.
+    ///
+    /// # Parameters
+    /// - `self`: Application state to update.
+    /// - `ctx`: egui context used by the scan worker for repaint requests.
+    /// - `path`: File or directory to scan.
+    ///
+    /// # Returns
+    /// Nothing; updates scan state, history, and activity logs.
     fn start_scan(&mut self, ctx: &egui::Context, path: PathBuf) {
         if let Some(old) = self.scan.take() {
             self.record_activity(trf(
@@ -210,6 +235,12 @@ impl App {
     }
 
     /// Back to the selection screen: drops the current result and cancels any running scan.
+    ///
+    /// # Parameters
+    /// - `self`: Application state to reset.
+    ///
+    /// # Returns
+    /// Nothing; clears scan results and refreshes the available drives.
     fn go_to_start_screen(&mut self) {
         self.scan_monitor = None;
         if let Some(scan) = self.scan.take() {
@@ -233,6 +264,13 @@ impl App {
         self.drives = drives::list();
     }
 
+    /// Checks for a completed scan and installs its result when available.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the optional scan handle.
+    ///
+    /// # Returns
+    /// Nothing; updates the tree, timing, navigation state, and completion log on success.
     fn poll_scan(&mut self) {
         let Some(scan) = &self.scan else { return };
         if let Ok(root) = scan.rx.try_recv() {
@@ -260,6 +298,14 @@ impl App {
         }
     }
 
+    /// Adds an activity message to the bounded log and refreshes the log window when visible.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the log and window state.
+    /// - `text`: Message to append.
+    ///
+    /// # Returns
+    /// Nothing; stores the message and may request a repaint.
     fn record_activity(&mut self, text: String) {
         {
             let mut logs = self.logs.lock().unwrap();
@@ -278,6 +324,13 @@ impl App {
         }
     }
 
+    /// Receives a completed release check and records any update or error.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the optional release-check receiver.
+    ///
+    /// # Returns
+    /// Nothing; consumes a ready result and updates release availability or activity logs.
     fn poll_update_check(&mut self) {
         let result = match &self.update_check_rx {
             Some(rx) => match rx.try_recv() {
@@ -303,6 +356,13 @@ impl App {
         }
     }
 
+    /// Detects a stalled scan and logs its latest activity at most once per stall.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing scan progress and monitor data.
+    ///
+    /// # Returns
+    /// Nothing; updates monitor snapshots and records a localized no-progress message when needed.
     fn monitor_scan(&mut self) {
         let Some(scan) = self.scan.as_ref() else {
             self.scan_monitor = None;
@@ -359,6 +419,14 @@ impl App {
         }
     }
 
+    /// Opens or updates the deferred activity-log window when it is marked visible.
+    ///
+    /// # Parameters
+    /// - `self`: Application state providing language, logs, and visibility state.
+    /// - `ctx`: Parent egui context used to create the deferred window.
+    ///
+    /// # Returns
+    /// Nothing; renders the window and records close requests in the shared visibility flag.
     fn show_logs_window(&self, ctx: &egui::Context) {
         if !self.show_logs.load(Ordering::Relaxed) {
             return;
@@ -417,6 +485,13 @@ impl App {
         });
     }
 
+    /// Navigates to the parent folder and selects the folder that was just left.
+    ///
+    /// # Parameters
+    /// - `self`: Application state whose current view is updated.
+    ///
+    /// # Returns
+    /// Nothing; has no effect when already at the scan root.
     fn go_up(&mut self) {
         if let Some(old) = self.view.pop() {
             let mut sel = self.view.clone();
@@ -426,6 +501,15 @@ impl App {
         }
     }
 
+    /// Selects a tree node, expands its ancestors, and optionally requests list scrolling.
+    ///
+    /// # Parameters
+    /// - `self`: Application state to update.
+    /// - `path`: Index path of the selected node.
+    /// - `scroll`: Whether the list should scroll the selected node into view.
+    ///
+    /// # Returns
+    /// Nothing; updates expansion, selection, and scroll state.
     fn select(&mut self, path: Vec<usize>, scroll: bool) {
         for n in self.view.len() + 1..path.len() {
             self.expanded.insert(path[..n].to_vec());
@@ -434,6 +518,14 @@ impl App {
         self.scroll_to_selected = scroll;
     }
 
+    /// Navigates into the selected node when it is a directory.
+    ///
+    /// # Parameters
+    /// - `self`: Application state whose current view is updated.
+    /// - `path`: Index path of the node to open.
+    ///
+    /// # Returns
+    /// Nothing; does nothing when the path is invalid or identifies a file.
     fn open(&mut self, path: Vec<usize>) {
         if self.root.as_ref().and_then(|r| r.get(&path)).is_some_and(|n| n.is_dir) {
             self.view = path;
@@ -441,6 +533,13 @@ impl App {
         }
     }
 
+    /// Checks whether any dialog or deletion operation currently blocks global shortcuts.
+    ///
+    /// # Parameters
+    /// - `self`: Application state whose modal flags are inspected.
+    ///
+    /// # Returns
+    /// `true` when a confirmation, information, about, or deletion dialog is active.
     fn modal_open(&self) -> bool {
         self.pending_trash.is_some()
             || self.pending_delete.is_some()
@@ -449,6 +548,14 @@ impl App {
             || self.show_about
     }
 
+    /// Renders the application information dialog and its dependency links.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the dialog visibility and language.
+    /// - `ctx`: egui context used to create the modal.
+    ///
+    /// # Returns
+    /// Nothing; clears the visibility flag after the modal closes.
     fn about_dialog(&mut self, ctx: &egui::Context) {
         if !self.show_about {
             return;
@@ -482,6 +589,14 @@ impl App {
     }
 
     /// Confirmation for moving to the trash, or for deleting permanently when `permanent`.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the pending target and dialog state.
+    /// - `ctx`: egui context used to render the modal.
+    /// - `permanent`: Whether the dialog confirms permanent deletion instead of trashing.
+    ///
+    /// # Returns
+    /// Nothing; starts the confirmed operation or clears the pending target on cancellation.
     fn removal_dialog(&mut self, ctx: &egui::Context, permanent: bool) {
         let pending = if permanent { &self.pending_delete } else { &self.pending_trash };
         let Some(path) = pending.clone() else { return };
@@ -533,6 +648,15 @@ impl App {
         }
     }
 
+    /// Starts permanent deletion on a worker thread and tracks its progress and cancellation.
+    ///
+    /// # Parameters
+    /// - `self`: Application state that owns the pending deletion handle.
+    /// - `path`: Index path of the node to remove from the scanned tree on success.
+    /// - `ctx`: egui context used to repaint as filesystem progress changes.
+    ///
+    /// # Returns
+    /// Nothing; stores a deletion handle or reports a worker-start error to the user.
     fn start_permanent_delete(&mut self, path: &[usize], ctx: &egui::Context) {
         let Some(root) = &self.root else { return };
         let target = root.path_of(&self.root_path, path);
@@ -582,6 +706,13 @@ impl App {
         }
     }
 
+    /// Receives a completed deletion result and updates the tree or reports its outcome.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the optional deletion handle.
+    ///
+    /// # Returns
+    /// Nothing; keeps waiting while the worker is active and handles its result once ready.
     fn poll_delete(&mut self) {
         let result = match self
             .deleting
@@ -615,6 +746,14 @@ impl App {
         }
     }
 
+    /// Displays deletion progress and lets the user request cancellation.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing current deletion progress and cancellation state.
+    /// - `ctx`: egui context used to render the modal.
+    ///
+    /// # Returns
+    /// Nothing; updates the cancellation flag when the user requests to stop.
     fn deleting_dialog(&self, ctx: &egui::Context) {
         let Some(deleting) = &self.deleting else {
             return;
@@ -660,6 +799,14 @@ impl App {
         });
     }
 
+    /// Shows metadata and size-share details for the selected tree node.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the selected information path and scan tree.
+    /// - `ctx`: egui context used to render the modal.
+    ///
+    /// # Returns
+    /// Nothing; opens the selected path in the file manager or clears the dialog on close.
     fn info_dialog(&mut self, ctx: &egui::Context) {
         let Some(path) = self.info.clone() else { return };
         let Some(root) = &self.root else {
@@ -732,6 +879,14 @@ impl App {
         }
     }
 
+    /// Moves a scanned node to the system trash and reports any failure.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the scan tree and root path.
+    /// - `path`: Index path of the node to move to the trash.
+    ///
+    /// # Returns
+    /// Nothing; updates the tree after success or displays and logs the error.
     fn remove(&mut self, path: &[usize]) {
         let Some(root) = &mut self.root else { return };
         let target = root.path_of(&self.root_path, path);
@@ -746,6 +901,16 @@ impl App {
         self.finish_remove(path, name, false);
     }
 
+    /// Removes a completed deletion from the in-memory tree and restores navigation paths.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the scan tree and navigation state.
+    /// - `path`: Index path of the removed node in the pre-removal tree.
+    /// - `name`: Removed node name used in the completion message.
+    /// - `permanent`: Whether the operation bypassed the system trash.
+    ///
+    /// # Returns
+    /// Nothing; refreshes tree indices, selection, expansion, and status message.
     fn finish_remove(&mut self, path: &[usize], name: String, permanent: bool) {
         let Some(root) = &mut self.root else { return };
         // Removing a node re-sorts its ancestors, so index paths are rebuilt from filesystem paths.
@@ -786,6 +951,13 @@ impl App {
 
     /// Progress page shown for every scan, including a rescan over an existing result.
     /// Returns true when the user asked to cancel.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the optional scan and language.
+    /// - `ui`: UI in which to render the progress view and cancel button.
+    ///
+    /// # Returns
+    /// `true` when the user clicked Cancel; otherwise `false`.
     fn scanning_screen(&self, ui: &mut Ui) -> bool {
         let Some(scan) = &self.scan else { return false };
         let lang = self.lang;
@@ -823,6 +995,13 @@ impl App {
 
     /// Start page: nothing is scanned until the user picks a folder.
     /// The layout follows the window size and scrolls when the window is short.
+    ///
+    /// # Parameters
+    /// - `self`: Application state providing language, drives, and recent paths.
+    /// - `ui`: UI in which to render and receive start-page input.
+    ///
+    /// # Returns
+    /// Nothing; starts a scan when the user chooses a drive, recent path, home folder, or directory.
     fn welcome_screen(&mut self, ui: &mut Ui) {
         let lang = self.lang;
         let pal = theme::Palette::new(ui.visuals().dark_mode);
@@ -955,6 +1134,12 @@ impl App {
 
     /// Path of the folder shown by the charts, one element per folder. Folders above the scan root
     /// are listed for context but cannot be opened; the others navigate inside the scan.
+    ///
+    /// # Parameters
+    /// - `self`: Application state providing the scan root and current view.
+    ///
+    /// # Returns
+    /// Breadcrumb elements for the filesystem path, with navigable depths inside the scanned tree.
     fn crumbs(&self) -> Vec<Crumb> {
         let Some(root) = &self.root else { return Vec::new() };
         let mut crumbs: Vec<Crumb> = Vec::new();
@@ -981,6 +1166,13 @@ impl App {
     }
 
     /// Shows the folder at `depth` levels below the scan root.
+    ///
+    /// # Parameters
+    /// - `self`: Application state whose view and selection are updated.
+    /// - `depth`: Number of child levels to retain from the current scan root.
+    ///
+    /// # Returns
+    /// Nothing; truncates the current view only when navigating to an ancestor.
     fn navigate_to(&mut self, depth: usize) {
         if depth < self.view.len() {
             self.view.truncate(depth);
@@ -988,6 +1180,14 @@ impl App {
         }
     }
 
+    /// Renders navigation, scan, deletion, language, theme, logs, and about controls.
+    ///
+    /// # Parameters
+    /// - `self`: Application state updated by toolbar interactions.
+    /// - `ui`: UI in which to render and receive toolbar input.
+    ///
+    /// # Returns
+    /// Nothing; applies actions selected by the user.
     fn toolbar(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         let lang = self.lang;
@@ -1091,6 +1291,14 @@ impl App {
         }
     }
 
+    /// Lazily loads and caches the embedded application logo as an egui texture.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the optional cached texture.
+    /// - `ctx`: egui context used to create the texture if needed.
+    ///
+    /// # Returns
+    /// The texture identifier for the cached logo.
     fn logo_texture(&mut self, ctx: &egui::Context) -> egui::TextureId {
         self.logo
             .get_or_insert_with(|| {
@@ -1107,6 +1315,13 @@ impl App {
 
     /// Title row: app logo and name on the left, scan status on the right. On macOS it replaces the
     /// native title bar, so it also drags and zooms the window.
+    ///
+    /// # Parameters
+    /// - `self`: Application state providing the logo, scan status, and cancellation handle.
+    /// - `ui`: UI in which to draw the title row and receive window-control input.
+    ///
+    /// # Returns
+    /// Nothing; renders the title and may cancel a running scan.
     fn title_row(&mut self, ui: &mut Ui) {
         let lang = self.lang;
         let pal = theme::Palette::new(ui.visuals().dark_mode);
@@ -1182,6 +1397,14 @@ impl App {
         }
     }
 
+    /// Draws sortable list-column headings and handles column resizing.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing sort preferences and column widths.
+    /// - `ui`: UI in which to render and receive header input.
+    ///
+    /// # Returns
+    /// Nothing; updates sorting and column widths in response to user interaction.
     fn header(&mut self, ui: &mut Ui) {
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
         let cols = Columns::new(rect, self.col_widths);
@@ -1257,6 +1480,14 @@ impl App {
         }
     }
 
+    /// Renders the current directory's sortable, expandable file list and handles row actions.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the tree, view, selection, and list preferences.
+    /// - `ui`: UI in which to render and receive list input.
+    ///
+    /// # Returns
+    /// Nothing; applies the action selected from the list or a row context menu.
     fn list(&mut self, ui: &mut Ui) {
         self.header(ui);
         let Some(root) = &self.root else { return };
@@ -1358,6 +1589,14 @@ impl App {
         }
     }
 
+    /// Renders the selected chart style and applies chart selection or context-menu actions.
+    ///
+    /// # Parameters
+    /// - `self`: Application state containing the tree, chart selection, and current view.
+    /// - `ui`: UI in which to render the chart and receive pointer input.
+    ///
+    /// # Returns
+    /// Nothing; updates navigation, selection, or pending actions from the chart response.
     fn chart_panel(&mut self, ui: &mut Ui) {
         let Some(root) = &self.root else { return };
         let cx = ChartCtx {
@@ -1398,10 +1637,27 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Draws one application frame by delegating to the main UI update method.
+    ///
+    /// # Parameters
+    /// - `self`: Application state to update and render.
+    /// - `ui`: Root UI supplied by eframe.
+    /// - `_frame`: eframe frame metadata, unused by this application.
+    ///
+    /// # Returns
+    /// Nothing; renders the current frame and processes its input.
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         self.show(ui);
     }
 
+    /// Persists language, theme, recent paths, and column widths to eframe storage.
+    ///
+    /// # Parameters
+    /// - `self`: Application preferences to save.
+    /// - `storage`: Persistent storage provided by eframe.
+    ///
+    /// # Returns
+    /// Nothing; writes the supported preference keys to `storage`.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string("lang", self.lang.code().to_owned());
         storage.set_string("dark", if self.dark { "1" } else { "0" }.to_owned());
@@ -1413,6 +1669,14 @@ impl eframe::App for App {
 }
 
 impl App {
+    /// Processes asynchronous results and renders the appropriate application screen and dialogs.
+    ///
+    /// # Parameters
+    /// - `self`: Application state to update and render.
+    /// - `ui`: Root UI in which to draw the current frame.
+    ///
+    /// # Returns
+    /// Nothing; handles input, state transitions, and drawing for one frame.
     fn show(&mut self, ui: &mut Ui) {
         self.root_ctx = Some(ui.ctx().clone());
         self.poll_update_check();
@@ -1529,6 +1793,13 @@ impl App {
     }
 }
 
+/// Parses and validates the three persisted list-column widths.
+///
+/// # Parameters
+/// - `s`: Comma-separated width values loaded from storage.
+///
+/// # Returns
+/// Three widths within the supported range, or `None` for malformed or out-of-range input.
 fn parse_widths(s: &str) -> Option<[f32; 3]> {
     let v: Vec<f32> = s.split(',').filter_map(|p| p.parse().ok()).collect();
     let w: [f32; 3] = v.try_into().ok()?;
@@ -1543,6 +1814,14 @@ struct Columns {
 }
 
 impl Columns {
+    /// Calculates the right-edge positions of each list column within a row rectangle.
+    ///
+    /// # Parameters
+    /// - `rect`: Full available row rectangle.
+    /// - `widths`: Widths of the size, contents, and modified columns.
+    ///
+    /// # Returns
+    /// Column boundary coordinates relative to the UI's screen space.
     fn new(rect: Rect, widths: [f32; 3]) -> Self {
         let date_right = rect.right() - 8.0;
         let items_right = date_right - widths[2];
@@ -1556,6 +1835,14 @@ impl Columns {
     }
 }
 
+/// Produces child indices ordered by the requested property and direction.
+///
+/// # Parameters
+/// - `children`: Nodes whose display order is requested.
+/// - `(key, desc)`: Sort property and whether to reverse the ascending order.
+///
+/// # Returns
+/// Child indices in display order, leaving the input nodes unchanged.
 fn sorted_indices(children: &[Node], (key, desc): (SortKey, bool)) -> Vec<usize> {
     let mut idx: Vec<usize> = (0..children.len()).collect();
     match key {
@@ -1570,6 +1857,18 @@ fn sorted_indices(children: &[Node], (key, desc): (SortKey, bool)) -> Vec<usize>
     idx
 }
 
+/// Flattens visible descendants into list rows, recursing only into expanded directories.
+///
+/// # Parameters
+/// - `node`: Directory whose children should be added.
+/// - `path`: Mutable index path extended and restored during traversal.
+/// - `depth`: Current row indentation depth.
+/// - `expanded`: Set of directory paths whose descendants should be included.
+/// - `sort`: Sort key and direction for each directory's children.
+/// - `rows`: Output vector receiving the generated rows.
+///
+/// # Returns
+/// Nothing; appends visible rows to `rows`.
 fn flatten<'a>(
     node: &'a Node,
     path: &mut Vec<usize>,
@@ -1594,6 +1893,18 @@ fn flatten<'a>(
     }
 }
 
+/// Draws one file-list row and returns the action triggered by its controls or context menu.
+///
+/// # Parameters
+/// - `ui`: UI in which to draw the row and receive input.
+/// - `lang`: Language used for row labels and context-menu text.
+/// - `row`: Node, path, depth, and parent size represented by the row.
+/// - `selected`: Currently selected node path, if any.
+/// - `expanded`: Paths of directories currently expanded in the list.
+/// - `widths`: Widths of the size, contents, and modified columns.
+///
+/// # Returns
+/// The selected list action, or `None` when the row was not activated.
 fn draw_row(
     ui: &mut Ui,
     lang: Lang,
@@ -1707,6 +2018,16 @@ fn draw_row(
     action
 }
 
+/// Draws a drive card with its type icon, used-space bar, and free-space label.
+///
+/// # Parameters
+/// - `ui`: UI in which to draw the card and receive input.
+/// - `lang`: Language used for capacity labels.
+/// - `drive`: Drive whose properties are displayed.
+/// - `width`: Horizontal width allocated to the card.
+///
+/// # Returns
+/// `true` when the card is clicked.
 fn drive_card(ui: &mut Ui, lang: Lang, drive: &Drive, width: f32) -> bool {
     let (rect, resp) = ui.allocate_exact_size(vec2(width, CARD_H), Sense::click());
     let visuals = ui.visuals();
@@ -1780,6 +2101,13 @@ mod tests {
     use egui_kittest::Harness;
     use egui_kittest::kittest::Queryable;
 
+    /// Builds a small deterministic directory tree for UI tests.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// A root node with one large and one small file child.
     fn sample_root() -> Node {
         let file = |name: &str, size| Node {
             name: name.into(),
@@ -1799,6 +2127,13 @@ mod tests {
         }
     }
 
+    /// Verifies that the home control returns to folder selection without starting a scan.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if the result or scan remains active after navigation.
     #[test]
     fn home_button_returns_to_selection_screen_without_scanning() {
         let mut app = App::empty(Lang::En, Vec::new());
@@ -1820,6 +2155,13 @@ mod tests {
         harness.get_by_label("Choose what to scan. Nothing is scanned until you ask.");
     }
 
+    /// Verifies that the toolbar opens the activity log window with its latest entry.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if the log window or recorded activity is missing.
     #[test]
     fn toolbar_logs_button_opens_logs_window() {
         let mut app = App::empty(Lang::En, Vec::new());
@@ -1840,6 +2182,13 @@ mod tests {
         harness.get_by_label("Test scan completed");
     }
 
+    /// Verifies that the about dialog lists the application's dependency libraries.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if the dialog or representative library links are absent.
     #[test]
     fn about_button_lists_application_libraries_on_the_welcome_screen() {
         let app = App::empty(Lang::En, Vec::new());
@@ -1859,6 +2208,13 @@ mod tests {
         harness.get_by_label_contains("ureq ");
     }
 
+    /// Verifies that the footer displays a link when a newer release is available.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if the expected release link is not accessible.
     #[test]
     fn footer_shows_link_when_a_newer_release_is_available() {
         let mut app = App::empty(Lang::En, Vec::new());
@@ -1875,6 +2231,13 @@ mod tests {
         harness.get_by_label("Open release 0.2.0 on GitHub");
     }
 
+    /// Verifies that a stalled scan logs its latest activity only once.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if the stall message is missing or duplicated.
     #[test]
     fn scan_monitor_logs_the_last_activity_once_when_progress_stalls() {
         let mut app = App::empty(Lang::En, Vec::new());
@@ -1904,6 +2267,13 @@ mod tests {
         assert!(logs[0].text.contains("Reading folder: /slow-folder"));
     }
 
+    /// Verifies that background permanent deletion removes the file and updates the tree.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if the worker does not finish or the deleted node remains.
     #[test]
     fn permanent_delete_runs_in_background_and_updates_the_tree_when_done() {
         let dir = std::env::temp_dir().join(format!(
@@ -1951,6 +2321,13 @@ mod tests {
         std::fs::remove_dir(dir).unwrap();
     }
 
+    /// Verifies that the deletion modal reports progress and accepts cancellation.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if progress, current path, or cancellation behavior is incorrect.
     #[test]
     fn deleting_modal_shows_that_permanent_deletion_is_in_progress() {
         let mut app = App::empty(Lang::En, Vec::new());
@@ -1995,6 +2372,13 @@ mod tests {
         harness.get_by_label("Stopping after the current filesystem operation…");
     }
 
+    /// Verifies that cancelling deletion preserves the tree and displays a rescan warning.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if the tree changes or the cancellation warning is missing.
     #[test]
     fn cancelled_delete_keeps_the_tree_and_warns_that_it_may_be_stale() {
         let mut app = App::empty(Lang::En, Vec::new());
@@ -2016,6 +2400,13 @@ mod tests {
         assert!(app.message.as_ref().unwrap().1.contains("rescan"));
     }
 
+    /// Verifies that selecting a chart item expands its ancestors and scrolls it into view.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if the selected chart item is not exposed in the list.
     #[test]
     fn chart_selection_expands_and_scrolls_the_list_to_the_selected_item() {
         let files = (0..40)
@@ -2094,6 +2485,13 @@ mod tests {
         );
     }
 
+    /// Verifies that dragging a list-header boundary changes the corresponding column width.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if no resize handle changes a column width.
     #[test]
     fn dragging_a_header_edge_resizes_the_column() {
         let mut app = App::empty(Lang::En, Vec::new());
@@ -2131,8 +2529,13 @@ mod tests {
         assert!(after.iter().zip(before).any(|(a, b)| a > &b));
     }
 
-
-
+    /// Verifies that right-clicking a chart item opens its context menu and selects the item.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if menu actions or selection are unavailable.
     #[test]
     fn right_click_on_a_chart_item_opens_its_menu() {
         let mut app = App::empty(Lang::En, Vec::new());
@@ -2171,6 +2574,13 @@ mod tests {
         assert!(harness.state().info.is_some());
     }
 
+    /// Verifies that clicking breadcrumb elements navigates to the matching ancestor.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if the view path does not match the clicked breadcrumb.
     #[test]
     fn clicking_a_path_element_navigates_up_the_tree() {
         let leaf = |name: &str| Node {
@@ -2208,6 +2618,13 @@ mod tests {
         assert!(harness.state().view.is_empty());
     }
 
+    /// Verifies that cancelling a scan returns the application to the selection screen.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if a scan or result remains visible after cancellation.
     #[test]
     fn cancelling_a_scan_returns_to_the_start_screen() {
         let app = App::empty(Lang::En, Vec::new());
@@ -2230,7 +2647,13 @@ mod tests {
         harness.get_by_label("Choose what to scan. Nothing is scanned until you ask.");
     }
 
-
+    /// Verifies that rescanning hides the previous result and offers progress cancellation.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if stale results remain visible or cancellation fails.
     #[test]
     fn rescanning_shows_progress_and_cancel_instead_of_the_old_result() {
         let mut app = App::empty(Lang::En, Vec::new());
@@ -2255,6 +2678,13 @@ mod tests {
         assert!(harness.state().root.is_none());
     }
 
+    /// Verifies that persisted column widths are accepted only when all three are in range.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if valid widths are rejected or malformed widths are accepted.
     #[test]
     fn stored_column_widths_are_validated() {
         assert_eq!(parse_widths("90,140,110"), Some([90.0, 140.0, 110.0]));

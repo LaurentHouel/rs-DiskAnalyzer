@@ -22,26 +22,68 @@ pub struct Btn<'a> {
 }
 
 impl<'a> Btn<'a> {
+    /// Creates an icon-only button description with an accessible label.
+    ///
+    /// # Parameters
+    /// - `icon`: Main icon shown by the button.
+    /// - `label`: Accessible name and tooltip text.
+    ///
+    /// # Returns
+    /// A button description with no text, custom icon color, or trailing icon.
     pub fn icon(icon: Icon, label: &'a str) -> Self {
         Self { icon, icon_color: None, text: None, trailing: None, label }
     }
 
+    /// Adds a text label beside the button's main icon.
+    ///
+    /// # Parameters
+    /// - `self`: Button description to update.
+    /// - `text`: Text displayed beside the icon.
+    ///
+    /// # Returns
+    /// The updated button description for method chaining.
     pub fn with_text(mut self, text: &'a str) -> Self {
         self.text = Some(text);
         self
     }
 
+    /// Sets a custom color for the main icon when the button is enabled.
+    ///
+    /// # Parameters
+    /// - `self`: Button description to update.
+    /// - `color`: Main icon color.
+    ///
+    /// # Returns
+    /// The updated button description for method chaining.
     pub fn icon_color(mut self, color: Color32) -> Self {
         self.icon_color = Some(color);
         self
     }
 
+    /// Adds a secondary icon after the button text.
+    ///
+    /// # Parameters
+    /// - `self`: Button description to update.
+    /// - `icon`: Trailing icon to display.
+    ///
+    /// # Returns
+    /// The updated button description for method chaining.
     pub fn trailing(mut self, icon: Icon) -> Self {
         self.trailing = Some(icon);
         self
     }
 }
 
+/// Renders a styled toolbar button and returns its egui interaction response.
+///
+/// # Parameters
+/// - `ui`: UI in which to allocate and draw the button.
+/// - `pal`: Theme palette used for button colors.
+/// - `enabled`: Whether the button accepts clicks.
+/// - `btn`: Content and accessible label for the button.
+///
+/// # Returns
+/// The button's interaction response, including click and hover state.
 pub fn tool_button(ui: &mut Ui, pal: &Palette, enabled: bool, btn: Btn) -> Response {
     let text_color = if enabled { pal.btn_text } else { pal.btn_disabled };
     let galley = btn
@@ -100,12 +142,29 @@ pub fn tool_button(ui: &mut Ui, pal: &Palette, enabled: bool, btn: Btn) -> Respo
 }
 
 /// Thin vertical divider between toolbar groups.
+///
+/// # Parameters
+/// - `ui`: UI in which to allocate and draw the divider.
+/// - `pal`: Theme palette providing its stroke color.
+///
+/// # Returns
+/// Nothing; allocates space and paints a vertical line.
 pub fn divider(ui: &mut Ui, pal: &Palette) {
     let (rect, _) = ui.allocate_exact_size(vec2(9.0, 22.0), Sense::hover());
     ui.painter().vline(rect.center().x, rect.y_range(), Stroke::new(1.0, pal.btn_border));
 }
 
 /// Rounded status badge anchored to `right_center`, returns its rect.
+///
+/// # Parameters
+/// - `ui`: UI in which to draw the badge.
+/// - `pal`: Theme palette providing its background and border colors.
+/// - `right_center`: Right edge and vertical center used to position the badge.
+/// - `text`: Status text displayed inside the badge.
+/// - `dot`: Color of the status indicator dot.
+///
+/// # Returns
+/// The rectangle occupied by the badge.
 pub fn status_pill(ui: &mut Ui, pal: &Palette, right_center: egui::Pos2, text: &str, dot: Color32) -> Rect {
     let weak = ui.visuals().weak_text_color();
     let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::proportional(13.0), weak);
@@ -128,6 +187,15 @@ pub struct Crumb {
 
 /// Clickable path ("breadcrumb"); returns the depth of the clicked element.
 /// Leading elements are replaced by an ellipsis when `max_width` is too small.
+///
+/// # Parameters
+/// - `ui`: UI in which to render and receive input.
+/// - `pal`: Theme palette for breadcrumb states and separators.
+/// - `crumbs`: Ordered path elements, including their navigable depths.
+/// - `max_width`: Maximum horizontal space available to the breadcrumb.
+///
+/// # Returns
+/// The depth of the clicked navigable element, or `None` when none was clicked.
 pub fn breadcrumb(ui: &mut Ui, pal: &Palette, crumbs: &[Crumb], max_width: f32) -> Option<usize> {
     const SEP: f32 = 14.0;
     const PAD: f32 = 6.0;
@@ -181,13 +249,33 @@ pub fn breadcrumb(ui: &mut Ui, pal: &Palette, crumbs: &[Crumb], max_width: f32) 
     clicked
 }
 
+/// Draws the chevron separator between breadcrumb elements.
+///
+/// # Parameters
+/// - `ui`: UI in which to allocate and draw the separator.
+/// - `pal`: Theme palette providing the separator color.
+///
+/// # Returns
+/// Nothing; allocates the separator's layout space and paints its icon.
 fn separator(ui: &mut Ui, pal: &Palette) {
     let (rect, _) = ui.allocate_exact_size(vec2(14.0, 24.0), Sense::hover());
     icons::paint(ui.painter(), Icon::ChevronRight, Rect::from_center_size(rect.center(), vec2(10.0, 10.0)), pal.btn_disabled);
 }
 
 /// Bottom bar: version on the left, credits in the middle, project link on the right.
-/// Returns true when the GitHub link was clicked.
+/// Returns the action triggered by the project or release link.
+///
+/// # Parameters
+/// - `ui`: UI in which to render and receive input.
+/// - `pal`: Theme palette used by interactive footer elements.
+/// - `version`: Application version label.
+/// - `credits_before_heart`, `credits_after_heart`: Credit text surrounding the heart icon.
+/// - `link`: Project link label.
+/// - `link_tip`: Accessible name and tooltip for the project link.
+/// - `update_tip`: Optional release-update tooltip and availability indicator.
+///
+/// # Returns
+/// The clicked footer action, or `None` when neither link is clicked.
 pub fn footer(
     ui: &mut Ui,
     pal: &Palette,

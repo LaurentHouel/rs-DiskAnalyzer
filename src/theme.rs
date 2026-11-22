@@ -22,6 +22,13 @@ pub struct Palette {
 }
 
 impl Palette {
+    /// Creates the custom widget colors for the selected theme.
+    ///
+    /// # Parameters
+    /// - `dark`: Whether to use the dark palette.
+    ///
+    /// # Returns
+    /// A palette containing colors for application-specific UI elements.
     pub fn new(dark: bool) -> Self {
         if dark {
             Self {
@@ -67,6 +74,13 @@ impl Palette {
     }
 }
 
+/// Builds egui's visual style overrides for dark mode.
+///
+/// # Parameters
+/// None.
+///
+/// # Returns
+/// Dark visuals with the application's panel, widget, selection, and shadow styling.
 fn dark_visuals() -> Visuals {
     let mut v = Visuals::dark();
     let radius = CornerRadius::same(8);
@@ -106,6 +120,13 @@ fn dark_visuals() -> Visuals {
     v
 }
 
+/// Builds egui's visual style overrides for light mode.
+///
+/// # Parameters
+/// None.
+///
+/// # Returns
+/// Light visuals with the application's panel, widget, selection, and shadow styling.
 fn light_visuals() -> Visuals {
     let mut v = Visuals::light();
     let radius = CornerRadius::same(8);
@@ -137,6 +158,13 @@ fn light_visuals() -> Visuals {
 }
 
 /// Installs both themes and selects the one matching `dark`.
+///
+/// # Parameters
+/// - `ctx`: egui context whose styles and active theme are updated.
+/// - `dark`: Whether dark mode should be active.
+///
+/// # Returns
+/// Nothing; updates `ctx` in place.
 pub fn apply(ctx: &Context, dark: bool) {
     ctx.set_visuals_of(Theme::Dark, dark_visuals());
     ctx.set_visuals_of(Theme::Light, light_visuals());

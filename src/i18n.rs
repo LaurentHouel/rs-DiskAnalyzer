@@ -11,6 +11,13 @@ pub enum Lang {
 impl Lang {
     pub const ALL: [Lang; 4] = [Lang::En, Lang::Fr, Lang::Es, Lang::De];
 
+    /// Returns the stable language identifier used in settings and locale tags.
+    ///
+    /// # Parameters
+    /// - `self`: Language to identify.
+    ///
+    /// # Returns
+    /// Its lowercase two-letter language code.
     pub fn code(self) -> &'static str {
         match self {
             Lang::En => "en",
@@ -20,6 +27,13 @@ impl Lang {
         }
     }
 
+    /// Returns the language's name written in that language.
+    ///
+    /// # Parameters
+    /// - `self`: Language whose native name is requested.
+    ///
+    /// # Returns
+    /// A static native-language name.
     pub fn native_name(self) -> &'static str {
         match self {
             Lang::En => "English",
@@ -29,15 +43,36 @@ impl Lang {
         }
     }
 
+    /// Parses a language code or locale identifier, ignoring region and encoding suffixes.
+    ///
+    /// # Parameters
+    /// - `code`: Language identifier such as `fr`, `fr_FR`, or `fr-CA`.
+    ///
+    /// # Returns
+    /// The supported language, or `None` if the primary code is unknown.
     pub fn from_code(code: &str) -> Option<Lang> {
         let primary = code.split(['-', '_']).next()?.to_ascii_lowercase();
         Lang::ALL.into_iter().find(|l| l.code() == primary)
     }
 
+    /// Converts the language enum discriminant to its translation-table index.
+    ///
+    /// # Parameters
+    /// - `self`: Language to index.
+    ///
+    /// # Returns
+    /// The zero-based position used by the translation tables.
     fn idx(self) -> usize {
         self as usize
     }
 
+    /// Indicates whether formatted decimal values use a comma separator.
+    ///
+    /// # Parameters
+    /// - `self`: Language whose number formatting is checked.
+    ///
+    /// # Returns
+    /// `true` for non-English supported languages.
     fn decimal_comma(self) -> bool {
         self != Lang::En
     }
@@ -128,6 +163,14 @@ pub enum Key {
     ItemN,
 }
 
+/// Looks up the localized text for one translation key.
+///
+/// # Parameters
+/// - `lang`: Language to use.
+/// - `key`: Text identifier to translate.
+///
+/// # Returns
+/// A static string in the requested language.
 pub fn tr(lang: Lang, key: Key) -> &'static str {
     use Key::*;
     let t: [&'static str; 4] = match key {
@@ -447,6 +490,14 @@ pub fn tr(lang: Lang, key: Key) -> &'static str {
 }
 
 /// Translates `key` and substitutes `{0}`, `{1}`… with `args`.
+///
+/// # Parameters
+/// - `lang`: Language to use.
+/// - `key`: Text identifier to translate.
+/// - `args`: Values substituted into matching numbered placeholders.
+///
+/// # Returns
+/// An owned localized string with the supplied placeholders replaced.
 pub fn trf(lang: Lang, key: Key, args: &[&str]) -> String {
     let mut s = tr(lang, key).to_owned();
     for (i, a) in args.iter().enumerate() {
@@ -455,6 +506,14 @@ pub fn trf(lang: Lang, key: Key, args: &[&str]) -> String {
     s
 }
 
+/// Formats a byte count using localized units and decimal separators.
+///
+/// # Parameters
+/// - `lang`: Language to use for unit names and decimal formatting.
+/// - `bytes`: Size in bytes.
+///
+/// # Returns
+/// A human-readable size string, using decimal multiples of 1,000.
 pub fn format_size(lang: Lang, bytes: u64) -> String {
     if bytes < 1000 {
         return format!("{bytes} {}", tr(lang, Key::Bytes));
@@ -478,6 +537,13 @@ pub fn format_size(lang: Lang, bytes: u64) -> String {
 }
 
 /// Compact scan duration: "0.8 s", "42 s", "3 min 07 s".
+///
+/// # Parameters
+/// - `lang`: Language to use for decimal formatting.
+/// - `d`: Duration to format.
+///
+/// # Returns
+/// A compact duration string in seconds or minutes and seconds.
 pub fn format_duration(lang: Lang, d: Duration) -> String {
     let secs = d.as_secs_f64();
     if secs < 10.0 {
@@ -492,6 +558,14 @@ pub fn format_duration(lang: Lang, d: Duration) -> String {
     }
 }
 
+/// Formats an item count with the localized singular or plural label.
+///
+/// # Parameters
+/// - `lang`: Language to use.
+/// - `n`: Number of items.
+///
+/// # Returns
+/// A localized item-count string.
 pub fn format_items(lang: Lang, n: u64) -> String {
     if n == 1 {
         tr(lang, Key::Item1).to_owned()
@@ -500,6 +574,14 @@ pub fn format_items(lang: Lang, n: u64) -> String {
     }
 }
 
+/// Formats a modification timestamp as a localized relative age.
+///
+/// # Parameters
+/// - `lang`: Language to use.
+/// - `time`: Optional timestamp to format.
+///
+/// # Returns
+/// A relative age such as today, yesterday, a number of days, months, or years; empty if absent.
 pub fn format_age(lang: Lang, time: Option<SystemTime>) -> String {
     let Some(time) = time else {
         return String::new();
@@ -529,6 +611,13 @@ mod tests {
     use super::*;
 
     #[test]
+    /// Checks byte-size formatting, unit selection, and localization.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if any expected localized size differs.
     fn sizes_are_localized() {
         assert_eq!(format_size(Lang::En, 999), "999 bytes");
         assert_eq!(format_size(Lang::En, 53_200_000_000), "53.2 GB");
@@ -536,6 +625,13 @@ mod tests {
     }
 
     #[test]
+    /// Checks compact duration formatting and localized decimal separators.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if any expected duration string differs.
     fn durations_are_compact_and_localized() {
         assert_eq!(format_duration(Lang::En, Duration::from_millis(840)), "0.8 s");
         assert_eq!(format_duration(Lang::Fr, Duration::from_millis(2_450)), "2,5 s");
@@ -544,6 +640,13 @@ mod tests {
     }
 
     #[test]
+    /// Checks locale-code parsing and placeholder substitution in translated text.
+    ///
+    /// # Parameters
+    /// None.
+    ///
+    /// # Returns
+    /// Nothing; assertions fail if parsing or translated output differs.
     fn language_codes_and_placeholders() {
         assert_eq!(Lang::from_code("fr_FR.UTF-8"), Some(Lang::Fr));
         assert_eq!(Lang::from_code("pt-BR"), None);
