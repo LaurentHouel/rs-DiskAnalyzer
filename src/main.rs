@@ -49,8 +49,8 @@ fn prefer_dx12_on_windows(_options: &mut eframe::NativeOptions) {}
 /// # Returns
 /// The result of starting the eframe application, including any startup error.
 fn main() -> eframe::Result {
-    // The app never scans on its own. Only the explicit `--scan <folder>` option (debugging aid)
-    // starts a scan at launch; any other argument, e.g. added by the OS, is ignored.
+    // The app never scans on its own. Only the explicit `--scan <path>` option starts a scan;
+    // the Windows Explorer context-menu action uses it to scan the selected folder or drive.
     let mut args = std::env::args_os().skip(1);
     let mut start = None;
     while let Some(arg) = args.next() {

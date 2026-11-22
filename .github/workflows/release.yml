@@ -52,6 +52,7 @@ jobs:
           mkdir -p "$name" dist
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp target/${{ matrix.target }}/release/rs-disk-analyzer.exe "$name/"
+            cp packaging/windows/* "$name/"
             cp README.md "$name/"
             cp "$name/rs-disk-analyzer.exe" "dist/${name}.exe"
             7z a "dist/${name}.zip" "$name"

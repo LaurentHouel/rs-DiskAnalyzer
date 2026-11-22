@@ -14,7 +14,7 @@ Cross-platform (macOS, Windows, Linux) disk usage analyzer written in Rust with 
 Pre-built packages for macOS (Apple Silicon / Intel), Windows and Linux (x86_64 / aarch64) are attached to each [release](../../releases):
 
 - **macOS:** a `.dmg` containing `Disk Analyzer.app` and an Applications shortcut (double-click, no Terminal window). It is not notarized: on first launch, right-click → Open.
-- **Windows:** a standalone `rs-disk-analyzer.exe` GUI executable without a console window, plus a zip archive.
+- **Windows:** a standalone `rs-disk-analyzer.exe` GUI executable without a console window, plus a zip archive. The archive includes PowerShell scripts to add or remove a File Explorer context-menu action for folders and drives.
 - **Linux:** `.deb`, `.AppImage` and `.flatpak` packages, plus a tarball. The Flatpak requests full filesystem access so scans and file removal work.
 
 ## Build
@@ -34,6 +34,20 @@ Install the recommended extensions (`rust-analyzer`, `CodeLLDB`), set a breakpoi
 - *Windows, MSVC debugger* (uses the C/C++ extension)
 
 The app does not scan anything at startup; only the explicit option `--scan <folder>` starts a scan at launch (`cargo run -- --scan /some/folder`); any other argument is ignored. Dependencies are compiled with optimizations in dev builds so the UI stays responsive, while this crate stays fully debuggable.
+
+### Windows Explorer context menu
+
+Extract the Windows zip, open PowerShell in the extracted folder, and run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-context-menu.ps1
+```
+
+This registers **Scan with Disk Analyzer** for folders, drives, and the background of an open folder for the current Windows user; no administrator access is required. On Windows 11, the action may be under **Show more options**. To remove it, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\uninstall-context-menu.ps1
+```
 
 ## Shortcuts
 
