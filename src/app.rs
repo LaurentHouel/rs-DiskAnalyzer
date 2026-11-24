@@ -1510,11 +1510,19 @@ impl App {
         let p = ui.painter();
         let y = rect.center().y;
         let strong = ui.visuals().strong_text_color();
-        p.text(
-            pos2(rect.left() + 6.0, y),
+        let name_left = rect.left() + 6.0;
+        let name_width = (cols.name_right - name_left).max(0.0);
+        let name_font = FontId::proportional(14.0);
+        let name = truncate_text(p, &view.name, name_width, &name_font, accent);
+        let name_clip = Rect::from_min_max(
+            pos2(name_left, rect.top()),
+            pos2(name_left + name_width, rect.bottom()),
+        );
+        p.with_clip_rect(name_clip).text(
+            pos2(name_left, y),
             Align2::LEFT_CENTER,
-            &view.name,
-            FontId::proportional(14.0),
+            name,
+            name_font,
             accent,
         );
         let normal = ui.visuals().text_color();
@@ -1960,12 +1968,18 @@ fn draw_row(
     );
 
     let name_left = bar.right() + 8.0;
-    let name_clip = Rect::from_min_max(pos2(name_left, rect.top()), pos2(cols.name_right, rect.bottom()));
+    let name_width = (cols.name_right - name_left).max(0.0);
+    let name_font = FontId::proportional(13.0);
+    let name = truncate_text(p, &node.name, name_width, &name_font, visuals.text_color());
+    let name_clip = Rect::from_min_max(
+        pos2(name_left, rect.top()),
+        pos2(name_left + name_width, rect.bottom()),
+    );
     p.with_clip_rect(name_clip).text(
         pos2(name_left, y),
         Align2::LEFT_CENTER,
-        &node.name,
-        FontId::proportional(13.0),
+        name,
+        name_font,
         visuals.text_color(),
     );
 
@@ -2016,6 +2030,36 @@ fn draw_row(
         }
     });
     action
+}
+
+fn truncate_text(
+    painter: &egui::Painter,
+    text: &str,
+    max_width: f32,
+    font: &FontId,
+    color: Color32,
+) -> String {
+    if max_width <= 0.0 {
+        return String::new();
+    }
+    if painter.layout_no_wrap(text.to_owned(), font.clone(), color).size().x <= max_width {
+        return text.to_owned();
+    }
+
+    let ellipsis = "…";
+    if painter.layout_no_wrap(ellipsis.to_owned(), font.clone(), color).size().x > max_width {
+        return String::new();
+    }
+
+    let mut end = text.len();
+    while end > 0 {
+        end = text[..end].char_indices().last().map_or(0, |(index, _)| index);
+        let candidate = format!("{}{}", &text[..end], ellipsis);
+        if painter.layout_no_wrap(candidate.clone(), font.clone(), color).size().x <= max_width {
+            return candidate;
+        }
+    }
+    ellipsis.to_owned()
 }
 
 /// Draws a drive card with its type icon, used-space bar, and free-space label.
